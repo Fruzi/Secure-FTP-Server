@@ -1,7 +1,6 @@
 .idea/
 *.pdf
+*.db
 client/
 !client/client.py
-server/
-!server/server.py
-!server/db.py
+
