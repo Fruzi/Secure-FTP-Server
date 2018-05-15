@@ -2,5 +2,6 @@
 *.pdf
 client/
 !client/client.py
+!Client/db.py
 server/
 !server/server.py
