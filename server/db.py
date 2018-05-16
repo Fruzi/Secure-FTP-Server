@@ -61,7 +61,7 @@ def add_tag(_filename, _tag):
 
 # Returns a tuple with the tag for the given (encrypted) filename.
 def fetch_tag(_filename):
-    with sqlite3.connect('Tags.db') as dbcon:
+    with sqlite3.connect('tags.db') as dbcon:
         cursor = dbcon.cursor()
         cursor.execute("""SELECT tag FROM Tags WHERE filename = (?)""", (_filename,))
         return cursor.fetchone()

@@ -7,6 +7,7 @@ from pyftpdlib.servers import FTPServer
 class MyFTPHandler(FTPHandler):
 
     def __init__(self, conn, server, ioloop=None):
+        # adding the RGTR (register) command to the protocol
         proto_cmds['RGTR'] = dict(
             perm=None, auth=False, arg=True,
             help='Syntax: RGTR <SP> user-name (set username).')
@@ -14,7 +15,7 @@ class MyFTPHandler(FTPHandler):
         super().__init__(conn, server, ioloop)
 
     def ftp_RGTR(self, line):
-        """Register a new user."""
+        """Register a new user. The logged in user must be the anonymous user."""
         if self.username != 'anonymous':
             self.respond("503 Can't register while logged in.")
             return
@@ -36,7 +37,7 @@ class MyFTPHandler(FTPHandler):
         self.username = username
 
         self.fs.mkdir(username)
-        self.authorizer.add_user(username, line, username)
+        self.authorizer.add_user(username, line, username, perm='elradfmwMT')
         self.log("New USER '%s' registered." % self.username)
         self.registering = False
         super().ftp_PASS(line)

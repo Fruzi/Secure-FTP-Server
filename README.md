@@ -2,10 +2,11 @@
 
 ## TODO ##
 ### Client ###
-* Add key derivation (password, encryption and MAC keys) from master secret on login ([Cipher library](https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/#cryptography.hazmat.primitives.ciphers))
-* Add encryption/decryption and authentication to file upload (including filename), download, rename, delete procedures
-* Add decryption and authentication to 'ls' request
+* Add encryption/decryption and authentication to filename on upload and download, rename, delete, 'ls' procedures
+* Notify user if a file was deleted/renamed/size changed (upon connection)
+* Notify user if a file was modified (but file size unchanged) (upon file download)
 
 ### Server ###
-* Add SQL support for user-password database
-* Add MAC list file support for data verification
+* Add new users with randomly-generated salt and hashed salted passwords into users.db on register requests
+* Authenticate users with users.db on login requests (salt and hash the given password and match the data)
+* Add encrypted filenames and their MAC tags to tags.db on file upload
