@@ -40,7 +40,9 @@ class MyFTPClient(FTP):
         return ret
 
     def register(self, user, passwd, acct=''):
+        """This also makes the user logged in"""
         server_key = MyCipher.derive_server_key(passwd)
+        self.login()    # must log in as anonymous user first
         resp = self.sendcmd('RGTR ' + user)
         if resp[0] == '3':
             resp = self.sendcmd('PASS ' + server_key)
@@ -49,16 +51,15 @@ class MyFTPClient(FTP):
         if resp[0] != '2':
             from ftplib import error_reply
             raise error_reply(resp)
+        self._cipher = MyCipher(passwd)
         return resp
 
 
 def main():
     with MyFTPClient('localhost') as ftp:
-        ftp.login()
         ftp.register('Rawn', '1234')
         print(ftp.pwd())
         print(ftp.retrlines('LIST'))
-        ftp.login('Rawn', '1234')
         ftp.storbinary('STOR timetable.png', open('timetable.png', 'rb'))
         with open('timetable_from_server.png', 'wb') as outfile:
             ftp.retrbinary('RETR timetable.png', lambda b: outfile.write(b))
