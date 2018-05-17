@@ -7,9 +7,11 @@ def main():
     # create_tag_file()
     # add_user("Rawn", "a3nme", "123456")
     # add_user("Uzi", "1245", "anjkf")
-    print(fetch_tag("uzi's file"))
+    # print(fetch_tag("uzi's file"))
+    # print(fetch_tag("few"))
     print(fetch_user("banana"))
-    print(fetch_tag("few"))
+    print(has_user("Uzi"))
+    print(has_user("banana"))
 
 
 # Check if userfile exists, if not then create it.
@@ -49,6 +51,12 @@ def fetch_user(_name):
         cursor = dbcon.cursor()
         cursor.execute("""SELECT salt, hashed_pass FROM Users WHERE username = (?)""", (_name,))
         return cursor.fetchone()
+
+
+def has_user(_name):
+    if fetch_user(_name):
+        return 1
+    return 0
 
 
 # Adds a filename (encrypted) and it's tag to the tagfile.
