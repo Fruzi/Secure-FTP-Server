@@ -5,7 +5,6 @@ from mycrypto import MyCipher
 class TestMyCrypto(unittest.TestCase):
     def setUp(self):
         self.secret = 'dog'
-        self.cipher = MyCipher(self.secret)
 
     def test_mycipher_text(self):
         lorem_ipsum = """
@@ -15,8 +14,8 @@ class TestMyCrypto(unittest.TestCase):
             Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
             Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
         """
-        ct = self.cipher.encrypt(lorem_ipsum.encode())
-        pt = self.cipher.decrypt(ct).decode()
+        ct = MyCipher(self.secret).encrypt(lorem_ipsum.encode())
+        pt = MyCipher(self.secret).decrypt(ct).decode()
         self.assertEqual(lorem_ipsum, pt)
 
 

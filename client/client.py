@@ -58,9 +58,11 @@ class MyFTPClient(FTP):
 def main():
     with MyFTPClient('localhost') as ftp:
         ftp.register('Rawn', '1234')
-        print(ftp.pwd())
-        print(ftp.retrlines('LIST'))
+        # print(ftp.retrlines('LIST'))
         ftp.storbinary('STOR timetable.png', open('timetable.png', 'rb'))
+
+    with MyFTPClient('localhost') as ftp:
+        ftp.login('Rawn', '1234')
         with open('timetable_from_server.png', 'wb') as outfile:
             ftp.retrbinary('RETR timetable.png', lambda b: outfile.write(b))
 

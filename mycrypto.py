@@ -3,6 +3,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
 from cryptography.hazmat.primitives import hashes, hmac
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.exceptions import InvalidSignature
 from hashlib import sha256
 
@@ -10,9 +11,17 @@ from hashlib import sha256
 class MyCipher(object):
 
     def __init__(self, secret):
-        """Derive cipher key and MAC key using SHA256"""
-        self._cipher_key = sha256((secret + '1').encode()).digest()
-        self._mac_key = sha256((secret + '2').encode()).digest()
+        self._secret = secret
+        self._derive_cipher_key()
+        self._derive_mac_key()
+
+    def _derive_cipher_key(self):
+        kdf = HKDF(hashes.SHA256(), 32, None, None, default_backend())
+        self._cipher_key = kdf.derive((self._secret + '1').encode())
+
+    def _derive_mac_key(self):
+        kdf = HKDF(hashes.SHA256(), 32, None, None, default_backend())
+        self._mac_key = kdf.derive((self._secret + '2').encode())
 
     def encrypt(self, pt):
         """
