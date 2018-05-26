@@ -1,4 +1,5 @@
-import os
+import io
+import sys
 from ftplib import FTP
 from mycrypto import MyCipher
 
@@ -20,24 +21,45 @@ class MyFTPClient(FTP):
         self._cipher = MyCipher(passwd)
 
     def retrbinary(self, cmd, callback, blocksize=8192, rest=None):
-        """
-        Receive all data from the super-method and decrypt it as one piece
-        callback takes the entire decrypted data as parameter (instead of a block) (bad??)
-        """
-        buf = bytearray()
-        ret = super().retrbinary(cmd, lambda b: buf.extend(b), blocksize, rest)
-        callback(self._cipher.decrypt(bytes(buf)))
+        """Receive all data from the super-method and decrypt it as one piece"""
+        # TODO: filename encryption/decryption???
+        with io.BytesIO() as buf:
+            ret = super().retrbinary(cmd, lambda b: buf.write(b), blocksize, rest)
+            buf.flush()
+            dec_bytes = self._cipher.decrypt(buf.getvalue())
+        with io.BytesIO(dec_bytes) as buf:
+            while True:
+                b = buf.read(blocksize)
+                if not b:
+                    break
+                callback(b)
         return ret
 
     def storbinary(self, cmd, fp, blocksize=8192, callback=None, rest=None):
-        """Encrypt entire file into temporary file and call the super-method with it"""
-        enc_filename = '_enc_' + cmd[5:]
-        with open(enc_filename, 'wb') as temp_file:
-            temp_file.write(self._cipher.encrypt(fp.read()))
+        """Encrypt filename, encrypt file contents into memory buffer, then call the super-method with them"""
+        storcmd, filename = cmd.split()
+        enc_filename = self._cipher.encrypt(filename.encode()).hex()
+        with io.BytesIO() as buf:
+            while True:
+                b = fp.read(blocksize)
+                if not b:
+                    break
+                buf.write(b)
+            buf.flush()
+            enc_bytes = self._cipher.encrypt(buf.getvalue())
+        return super().storbinary(' '.join((storcmd, enc_filename)), io.BytesIO(enc_bytes), blocksize, callback, rest)
 
-        ret = super().storbinary(cmd, open(enc_filename, 'rb'), blocksize, callback, rest)
-        os.remove(enc_filename)
-        return ret
+    def retrlines(self, cmd, callback=None):
+        """Decrypt filenames received from LIST command and print them"""
+        if cmd != 'LIST':
+            return super().retrlines(cmd, callback)
+
+        def decrypt_line(line):
+            rest, filename = line.rsplit(maxsplit=1)
+            dec_filename = self._cipher.decrypt(bytes.fromhex(filename)).decode()
+            return ' '.join((rest, dec_filename))
+
+        return super().retrlines(cmd, lambda line: print(decrypt_line(line)))
 
     def register(self, user, passwd, acct=''):
         """This also makes the user logged in"""
@@ -56,15 +78,20 @@ class MyFTPClient(FTP):
 
 
 def main():
-    with MyFTPClient('localhost') as ftp:
-        ftp.register('Rawn', '1234')
-        # print(ftp.retrlines('LIST'))
-        ftp.storbinary('STOR timetable.png', open('timetable.png', 'rb'))
+    filename = 'potato.txt' if len(sys.argv) < 2 else sys.argv[1]
+    name, _, ext = filename.partition('.')
 
     with MyFTPClient('localhost') as ftp:
+        ftp.set_debuglevel(1)
+        ftp.register('Rawn', '1234')
+        ftp.storbinary('STOR ' + filename, open(filename, 'rb'))
+
+    with MyFTPClient('localhost') as ftp:
+        ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
-        with open('timetable_from_server.png', 'wb') as outfile:
-            ftp.retrbinary('RETR timetable.png', lambda b: outfile.write(b))
+        print(ftp.retrlines('LIST'))
+        # with open('%s_from_server.%s' % (name, ext), 'wb') as outfile:
+        #     ftp.retrbinary('RETR ' + filename, lambda b: outfile.write(b))
 
 
 if __name__ == '__main__':

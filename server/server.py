@@ -1,4 +1,5 @@
 import os
+import logging
 from pyftpdlib.authorizers import DummyAuthorizer
 from pyftpdlib.handlers import FTPHandler, proto_cmds
 from pyftpdlib.servers import FTPServer
@@ -58,6 +59,8 @@ def main():
     # set a limit for connections
     server.max_cons = 256
     server.max_cons_per_ip = 5
+
+    logging.basicConfig(level=logging.DEBUG)
 
     # start ftp server
     server.serve_forever()
