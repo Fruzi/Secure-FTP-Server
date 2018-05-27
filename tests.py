@@ -18,6 +18,12 @@ class TestMyCrypto(unittest.TestCase):
         pt = MyCipher(self.secret).decrypt(ct).decode()
         self.assertEqual(lorem_ipsum, pt)
 
+    def test_mycipher_filename(self):
+        filename = 'potato.txt'
+        ct1 = MyCipher(self.secret).encrypt(filename.encode(), deterministic_iv=True)
+        ct2 = MyCipher(self.secret).encrypt(filename.encode(), deterministic_iv=True)
+        self.assertEqual(ct1, ct2)
+
 
 if __name__ == '__main__':
     unittest.main()

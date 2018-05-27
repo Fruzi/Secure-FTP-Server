@@ -21,10 +21,11 @@ class MyFTPClient(FTP):
         self._cipher = MyCipher(passwd)
 
     def retrbinary(self, cmd, callback, blocksize=8192, rest=None):
-        """Receive all data from the super-method and decrypt it as one piece"""
-        # TODO: filename encryption/decryption???
+        """Encrypt filename, then receive all data from the super-method and decrypt it as one piece"""
+        retrcmd, filename = cmd.split()
+        enc_filename = self._cipher.encrypt(filename.encode(), deterministic_iv=True).hex()
         with io.BytesIO() as buf:
-            ret = super().retrbinary(cmd, lambda b: buf.write(b), blocksize, rest)
+            ret = super().retrbinary(' '.join((retrcmd, enc_filename)), lambda b: buf.write(b), blocksize, rest)
             buf.flush()
             dec_bytes = self._cipher.decrypt(buf.getvalue())
         with io.BytesIO(dec_bytes) as buf:
@@ -38,7 +39,7 @@ class MyFTPClient(FTP):
     def storbinary(self, cmd, fp, blocksize=8192, callback=None, rest=None):
         """Encrypt filename, encrypt file contents into memory buffer, then call the super-method with them"""
         storcmd, filename = cmd.split()
-        enc_filename = self._cipher.encrypt(filename.encode()).hex()
+        enc_filename = self._cipher.encrypt(filename.encode(), deterministic_iv=True).hex()
         with io.BytesIO() as buf:
             buf.write(fp.read())
             buf.flush()
@@ -75,19 +76,20 @@ class MyFTPClient(FTP):
 
 def main():
     filename = 'potato.txt' if len(sys.argv) < 2 else sys.argv[1]
-    # name, ext = filename.split('.')
+    name, ext = filename.split('.')
 
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
         ftp.register('Rawn', '1234')
         ftp.storbinary('STOR ' + filename, open(filename, 'rb'))
+        ftp.storbinary('STOR timetable.png', open('timetable.png', 'rb'))
 
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
         print(ftp.retrlines('LIST'))
-        # with open('.'.join((name + '_from_server', ext)), 'wb') as outfile:
-        #     ftp.retrbinary('RETR ' + filename, lambda b: outfile.write(b))
+        with open('.'.join((name + '_from_server', ext)), 'wb') as outfile:
+            ftp.retrbinary('RETR ' + filename, lambda b: outfile.write(b))
 
 
 if __name__ == '__main__':

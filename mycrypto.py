@@ -11,32 +11,35 @@ from hashlib import sha256
 class MyCipher(object):
 
     def __init__(self, secret):
-        self._secret = secret
+        self._secret = secret.encode()
         self._derive_cipher_key()
         self._derive_mac_key()
 
     def _derive_cipher_key(self):
         kdf = HKDF(hashes.SHA256(), 32, None, None, default_backend())
-        self._cipher_key = kdf.derive((self._secret + '1').encode())
+        self._cipher_key = kdf.derive(self._secret + b'1')
 
     def _derive_mac_key(self):
         kdf = HKDF(hashes.SHA256(), 32, None, None, default_backend())
-        self._mac_key = kdf.derive((self._secret + '2').encode())
+        self._mac_key = kdf.derive(self._secret + b'2')
 
-    def encrypt(self, pt):
+    def encrypt(self, pt, deterministic_iv=False):
         """
-        Encrypt and authenticate the given plaintext using AES and HMAC
+        Encrypt and authenticate the given plaintext using AES and HMAC.
+        deterministic_iv should be True for filename encryption, in order to be able to
+        send an encrypted filename as a query to the server.
         :param pt: plaintext
+        :param deterministic_iv: if True, the IV will be generated using SHA256 on secret||pt
         :return: encrypted data: iv||ct||tag
                     iv = initialization vector (size: 128 bits)
                     ct = ciphertext (encrypted message) (size: unknown)
-                    tag: MAC tag (size: 256 bits)
+                    tag = MAC tag (size: 256 bits)
         """
         # pad the plaintext to make its size a multiple of 256 bits (for CBC)
         padder = PKCS7(256).padder()
         padded_pt = padder.update(pt) + padder.finalize()
 
-        iv = os.urandom(16)
+        iv = sha256(self._secret + pt).digest()[:16] if deterministic_iv else os.urandom(16)
         cipher = Cipher(algorithms.AES(self._cipher_key), modes.CBC(iv), default_backend())
         encryptor = cipher.encryptor()
         ct = encryptor.update(padded_pt) + encryptor.finalize()
@@ -74,4 +77,5 @@ class MyCipher(object):
 
     @staticmethod
     def derive_server_key(secret):
-        return sha256((secret + '3').encode()).hexdigest()
+        kdf = HKDF(hashes.SHA256(), 32, None, None, default_backend())
+        return kdf.derive((secret.encode() + b'3')).hex()
