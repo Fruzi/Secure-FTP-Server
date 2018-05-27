@@ -40,11 +40,7 @@ class MyFTPClient(FTP):
         storcmd, filename = cmd.split()
         enc_filename = self._cipher.encrypt(filename.encode()).hex()
         with io.BytesIO() as buf:
-            while True:
-                b = fp.read(blocksize)
-                if not b:
-                    break
-                buf.write(b)
+            buf.write(fp.read())
             buf.flush()
             enc_bytes = self._cipher.encrypt(buf.getvalue())
         return super().storbinary(' '.join((storcmd, enc_filename)), io.BytesIO(enc_bytes), blocksize, callback, rest)
@@ -79,7 +75,7 @@ class MyFTPClient(FTP):
 
 def main():
     filename = 'potato.txt' if len(sys.argv) < 2 else sys.argv[1]
-    name, _, ext = filename.partition('.')
+    # name, ext = filename.split('.')
 
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
@@ -90,7 +86,7 @@ def main():
         ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
         print(ftp.retrlines('LIST'))
-        # with open('%s_from_server.%s' % (name, ext), 'wb') as outfile:
+        # with open('.'.join((name + '_from_server', ext)), 'wb') as outfile:
         #     ftp.retrbinary('RETR ' + filename, lambda b: outfile.write(b))
 
 
