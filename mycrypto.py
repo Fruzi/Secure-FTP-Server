@@ -23,6 +23,10 @@ class MyCipher(object):
         kdf = HKDF(hashes.SHA256(), 32, None, None, default_backend())
         self._mac_key = kdf.derive(self._secret + b'2')
 
+    def derive_server_key(self):
+        kdf = HKDF(hashes.SHA256(), 32, None, None, default_backend())
+        return kdf.derive(self._secret + b'3').hex()
+
     def encrypt(self, pt, deterministic_iv=False):
         """
         Encrypt and authenticate the given plaintext using AES and HMAC.
@@ -74,8 +78,3 @@ class MyCipher(object):
         padded_pt = decryptor.update(ct) + decryptor.finalize()
         unpadder = PKCS7(256).unpadder()
         return unpadder.update(padded_pt) + unpadder.finalize()
-
-    @staticmethod
-    def derive_server_key(secret):
-        kdf = HKDF(hashes.SHA256(), 32, None, None, default_backend())
-        return kdf.derive((secret.encode() + b'3')).hex()
