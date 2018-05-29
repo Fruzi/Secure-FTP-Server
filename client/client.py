@@ -12,16 +12,11 @@ class MyFTPClient(FTP):
         super().__init__(host, user, passwd, acct, timeout, source_address)
 
     def login(self, user='', passwd='', acct=''):
-        if not user and not passwd:
-            return super().login(user, passwd, acct)
-
         self._cipher = MyCipher(passwd)
         server_key = self._cipher.derive_server_key()
         return super().login(user, server_key, acct)
 
     def register(self, user, passwd, acct=''):
-        """This also makes the user logged in"""
-        self.login()    # must log in as anonymous user first
         self._cipher = MyCipher(passwd)
         resp = self.sendcmd('RGTR ' + user)
         if resp[0] == '3':
@@ -69,16 +64,16 @@ class MyFTPClient(FTP):
         return super().retrlines(cmd, lambda line: print(decrypt_line(line)))
 
     def rename(self, fromname, toname):
-        return super().rename(self._encrypt_filename(fromname), self._encrypt_filename(toname))
+        return super().rename(self._encrypt_path(fromname), self._encrypt_path(toname))
 
     def delete(self, filename):
-        return super().delete(self._encrypt_filename(filename))
+        return super().delete(self._encrypt_path(filename))
 
     def cwd(self, dirname):
         return super().cwd(self._encrypt_path(dirname))
 
     def size(self, filename):
-        return super().size(self._encrypt_filename(filename))
+        return super().size(self._encrypt_path(filename))
 
     def mkd(self, dirname):
         return super().mkd(self._encrypt_path(dirname))
