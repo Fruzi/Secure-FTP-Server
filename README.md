@@ -7,5 +7,4 @@
 * Notify user if a file was modified (but file size unchanged) (upon file download)
 
 ### Server ###
-* Handler: add encrypted filenames and their MAC tags to tags.db on file upload
 * Authorizer: remove import of hazmat, use MyCrypto instead

@@ -20,9 +20,12 @@ class TestMyCrypto(unittest.TestCase):
 
     def test_mycipher_filename(self):
         filename = 'potato.txt'
-        ct1 = MyCipher(self.secret).encrypt(filename.encode(), deterministic_iv=True)
-        ct2 = MyCipher(self.secret).encrypt(filename.encode(), deterministic_iv=True)
+        ct1 = MyCipher(self.secret).encrypt(filename.encode(), is_filename=True)
+        ct2 = MyCipher(self.secret).encrypt(filename.encode(), is_filename=True)
         self.assertEqual(ct1, ct2)
+
+        pt = MyCipher(self.secret).decrypt(ct1).decode()
+        self.assertEqual(filename, pt)
 
 
 if __name__ == '__main__':

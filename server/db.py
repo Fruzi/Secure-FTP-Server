@@ -120,6 +120,13 @@ def add_tag(_filename, _tag):
         return cursor.lastrowid
 
 
+# Updates an existing file's tag in the tagfile.
+def update_tag(_filename, _tag):
+    with sqlite3.connect('tags.db') as dbcon:
+        cursor = dbcon.cursor()
+        cursor.execute("""UPDATE Tags SET tag = (?) WHERE filename = (?)""", (_tag, _filename))
+
+
 def remove_tag(_filename):
     with sqlite3.connect('tags.db') as dbcon:
         cursor = dbcon.cursor()

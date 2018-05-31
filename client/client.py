@@ -31,10 +31,10 @@ class MyFTPClient(FTP):
 
     def retrbinary(self, cmd, callback, blocksize=8192, rest=None):
         """Encrypt filename, then receive all data from the super-method and decrypt it as one piece"""
-        retrcmd, filename = cmd.split()
-        enc_filename = self._encrypt_filename(filename)
+        retrcmd, path = cmd.split()
+        enc_path = self._encrypt_path(path)
         with io.BytesIO() as buf:
-            ret = super().retrbinary(' '.join((retrcmd, enc_filename)), buf.write, blocksize, rest)
+            ret = super().retrbinary(' '.join((retrcmd, enc_path)), buf.write, blocksize, rest)
             buf.flush()
             dec_bytes = self._cipher.decrypt(buf.getvalue())
         with io.BytesIO(dec_bytes) as buf:
@@ -47,10 +47,16 @@ class MyFTPClient(FTP):
 
     def storbinary(self, cmd, fp, blocksize=8192, callback=None, rest=None):
         """Encrypt filename, encrypt file contents into memory buffer, then call the super-method with them"""
-        storcmd, filename = cmd.split()
-        enc_filename = self._encrypt_filename(filename)
-        enc_bytes = self._cipher.encrypt(fp.read())
-        return super().storbinary(' '.join((storcmd, enc_filename)), io.BytesIO(enc_bytes), blocksize, callback, rest)
+        storcmd, path = cmd.split()
+        enc_path = self._encrypt_path(path)
+        enc_bytes, tag = self._cipher.encrypt(fp.read())
+        super().storbinary(' '.join((storcmd, enc_path)), io.BytesIO(enc_bytes), blocksize, callback, rest)
+
+        # send tag
+        resp = super().getresp()
+        if resp[0] == '3':
+            resp = self.voidcmd('TAG ' + tag.hex())
+        return resp
 
     def retrlines(self, cmd, callback=None):
         """Decrypt filenames received from LIST or NLST commands and print them"""
@@ -85,7 +91,7 @@ class MyFTPClient(FTP):
         return self._decrypt_path(super().pwd())
 
     def _encrypt_filename(self, filename):
-        return self._cipher.encrypt(filename.encode(), deterministic_iv=True).hex()
+        return self._cipher.encrypt(filename.encode(), is_filename=True).hex()
 
     def _decrypt_filename(self, filename):
         return self._cipher.decrypt(bytes.fromhex(filename)).decode()
@@ -109,9 +115,9 @@ def test_files():
 
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
-        ftp.register('Rawn', '1234')
+        ftp.login('Rawn', '1234')
         ftp.storbinary('STOR ' + filename, open(filename, 'rb'))
-        ftp.storbinary('STOR timetable.png', open('timetable.png', 'rb'))
+        ftp.storbinary('STOR potato.txt', open('potato.txt', 'rb'))
 
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
@@ -124,12 +130,7 @@ def test_files():
 def test_directories():
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
-        ftp.register('Rawn', '1234')
-
-    with MyFTPClient('localhost') as ftp:
-        ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
-        ftp.pwd()
         ftp.mkd('stuff')
         ftp.dir()
         ftp.cwd('stuff')
@@ -138,8 +139,17 @@ def test_directories():
         ftp.cwd('..')
 
 
+def register_users():
+    with MyFTPClient('localhost') as ftp:
+        ftp.set_debuglevel(1)
+        ftp.register('Rawn', '1234')
+        ftp.register('Uzi', '5678')
+        ftp.register('Amit', 'blabla')
+
+
 def main():
-    # test_files()
+    register_users()
+    test_files()
     test_directories()
 
 
