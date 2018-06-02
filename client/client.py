@@ -122,7 +122,7 @@ def test_files():
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
-        ftp.dir()
+        # ftp.dir()
         with open('.'.join((name + '_from_server', ext)), 'wb') as outfile:
             ftp.retrbinary('RETR ' + filename, outfile.write)
 
@@ -132,11 +132,11 @@ def test_directories():
         ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
         ftp.mkd('stuff')
-        ftp.dir()
+        # ftp.dir()
         ftp.cwd('stuff')
-        ftp.pwd()
-        ftp.dir()
-        ftp.cwd('..')
+        # ftp.pwd()
+        # ftp.dir()
+        # ftp.cwd('..')
 
 
 def register_users():

@@ -1,10 +1,9 @@
 import os
 import logging
 import db
+from mycrypto import MyCipher
 import pyftpdlib.filesystems
 from pyftpdlib.authorizers import DummyAuthorizer
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-from cryptography.hazmat.backends import default_backend
 from pyftpdlib.handlers import FTPHandler, proto_cmds
 from pyftpdlib.servers import FTPServer
 
@@ -15,6 +14,7 @@ class MySmartyAuthorizer(DummyAuthorizer):
         db.create_user_file()
         db.create_tag_file()
         db.create_user_metadata()
+        db.create_filenum_file()
 
     def add_user(self, username, password, homedir, perm='elr',
                  msg_login="Login successful.", msg_quit="Goodbye."):
@@ -26,16 +26,7 @@ class MySmartyAuthorizer(DummyAuthorizer):
             raise ValueError('no such directory: %r' % homedir)
         homedir = os.path.realpath(homedir)
         self._check_permissions(username, perm)
-        salt = os.urandom(16)
-        kdf = Scrypt(
-            salt=salt,
-            length=32,
-            n=2**14,
-            r=8,
-            p=1,
-            backend=default_backend()
-        )
-        key = kdf.derive(bytes.fromhex(password))
+        salt, key = MyCipher.derive_password_for_storage(password)
         db.add_user(username, salt, key)
         db.add_user_metadata(username, homedir, perm, '', msg_login, msg_quit)
 
@@ -49,15 +40,7 @@ class MySmartyAuthorizer(DummyAuthorizer):
         if not self.has_user(username):
             raise Exception(msg)
         udata = db.fetch_user(username)
-        kdf = Scrypt(
-            salt=udata[0],
-            length=32,
-            n=2**14,
-            r=8,
-            p=1,
-            backend=default_backend()
-        )
-        kdf.verify(bytes.fromhex(password), udata[1])
+        MyCipher.verify_stored_password(password, udata[0], udata[1])
 
     def get_home_dir(self, username):
         return db.fetch_user_metadata(username)[0]
@@ -146,8 +129,10 @@ class MyFTPHandler(FTPHandler):
 
         self._registering = False
         self.handle_auth_success(username, line, "New USER '%s' registered." % self.username)
-        self.fs.mkdir(username)
-        self.authorizer.add_user(username, line, username, perm='elradfmwMT')
+        next_filenum = db.get_next_filenum()
+        self.fs.mkdir(str(next_filenum))
+        db.add_filenum(username, next_filenum)
+        self.authorizer.add_user(username, line, str(next_filenum), perm='elradfmwMT')
         self.flush_account()
 
     def ftp_TAG(self, line):
@@ -167,12 +152,33 @@ class MyFTPHandler(FTPHandler):
         Creates a temporary file with the requested file data and tag from the db appended to it
         and calls the super-method with it
         """
+        filenum = db.fetch_filenum(file)[0]
+        file = self._fix_path(file, filenum)
         temp_filename = file + '__temp__'
-        with open(temp_filename, 'wb') as temp_file, self.fs.open(file, 'rb') as fd:
+        with self.fs.open(temp_filename, 'wb') as temp_file, self.fs.open(file, 'rb') as fd:
             temp_file.write(fd.read())
             temp_file.write(bytes.fromhex(db.fetch_tag(file)[0]))
         self._sending_temp_file = True
         return super().ftp_RETR(temp_filename)
+
+    def ftp_STOR(self, file, mode='w'):
+        filenum = db.fetch_filenum(file)
+        if not filenum:
+            filenum = db.get_next_filenum()
+            db.add_filenum(file, filenum)
+        else:
+            filenum = filenum[0]
+        return super().ftp_STOR(self._fix_path(file, filenum), mode)
+
+    def ftp_MKD(self, path):
+        filenum = db.get_next_filenum()
+        db.add_filenum(path, filenum)
+        return super().ftp_MKD(self._fix_path(path, filenum))
+
+    def ftp_CWD(self, path):
+        print(path)
+        filenum = db.fetch_filenum(path)[0]
+        return super().ftp_CWD(self._fix_path(path, filenum))
 
     def on_file_received(self, file):
         self._received_file = file
@@ -184,12 +190,19 @@ class MyFTPHandler(FTPHandler):
             os.remove(file)
             self._sending_temp_file = False
 
+    def on_incomplete_file_sent(self, file):
+        self.on_file_sent(file)
+
     def pre_process_command(self, line, cmd, arg):
         if cmd == 'TAG':
             self.logline("<- %s" % line)
             self.process_command(cmd, arg)
             return
         super().pre_process_command(line, cmd, arg)
+
+    @staticmethod
+    def _fix_path(path, filenum):
+        return os.sep.join(path.split(os.sep)[:-1] + [str(filenum)])
 
 
 def main():

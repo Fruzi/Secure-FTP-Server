@@ -4,6 +4,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
 from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.exceptions import InvalidSignature
 
 
@@ -60,9 +61,9 @@ class MyCipher(object):
         h.update(iv_and_ct)
         try:
             h.verify(tag)
-        except InvalidSignature as e:
+        except InvalidSignature:
             # TODO: Message invalid - do something
-            raise e
+            return None
 
         cipher = Cipher(algorithms.AES(self._cipher_key), modes.CBC(iv), default_backend())
         decryptor = cipher.decryptor()
@@ -75,3 +76,27 @@ class MyCipher(object):
     @staticmethod
     def derive_key(key_material):
         return HKDF(hashes.SHA256(), 32, None, None, default_backend()).derive(key_material)
+
+    @staticmethod
+    def derive_password_for_storage(password):
+        salt = os.urandom(16)
+        key = Scrypt(
+            salt=salt,
+            length=32,
+            n=2 ** 14,
+            r=8,
+            p=1,
+            backend=default_backend()
+        ).derive(bytes.fromhex(password))
+        return salt, key
+
+    @staticmethod
+    def verify_stored_password(password, salt, key):
+        Scrypt(
+            salt=salt,
+            length=32,
+            n=2 ** 14,
+            r=8,
+            p=1,
+            backend=default_backend()
+        ).verify(bytes.fromhex(password), key)

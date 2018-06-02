@@ -55,6 +55,16 @@ def create_user_metadata():
                             msg_quit TEXT NOT NULL)""")
 
 
+def create_filenum_file():
+    tags_existed = os.path.isfile('filenums.db')
+    with sqlite3.connect('filenums.db') as dbcon:
+        cursor = dbcon.cursor()
+        if not tags_existed:
+            cursor.execute("""CREATE TABLE Filenums (
+                            filename TEXT PRIMARY KEY NOT NULL,
+                            serial_num INTEGER NOT NULL)""")
+
+
 def add_user_metadata(username, homedir, perm, operms, msg_login, msg_quit):
     with sqlite3.connect('user_metadata.db') as dbcon:
         cursor = dbcon.cursor()
@@ -139,6 +149,28 @@ def fetch_tag(_filename):
         cursor = dbcon.cursor()
         cursor.execute("""SELECT tag FROM Tags WHERE filename = (?)""", (_filename,))
         return cursor.fetchone()
+
+
+def add_filenum(_filename, _num):
+    with sqlite3.connect('filenums.db') as dbcon:
+        cursor = dbcon.cursor()
+        cursor.execute("""INSERT INTO Filenums VALUES (?,?)""", (_filename, _num))
+        return cursor.lastrowid
+
+
+def fetch_filenum(_filename):
+    with sqlite3.connect('filenums.db') as dbcon:
+        cursor = dbcon.cursor()
+        cursor.execute("""SELECT serial_num FROM Filenums WHERE filename = (?)""", (_filename,))
+        return cursor.fetchone()
+
+
+def get_next_filenum():
+    with sqlite3.connect('filenums.db') as dbcon:
+        cursor = dbcon.cursor()
+        cursor.execute("""SELECT MAX(serial_num) FROM Filenums""")
+        max_num = cursor.fetchone()[0]
+        return (max_num + 1) if max_num is not None else 0
 
 
 if __name__ == '__main__':
