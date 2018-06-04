@@ -6,6 +6,7 @@ import pyftpdlib.filesystems
 from pyftpdlib.authorizers import DummyAuthorizer
 from pyftpdlib.handlers import FTPHandler, proto_cmds
 from pyftpdlib.servers import FTPServer
+from pyftpdlib.filesystems import AbstractedFS
 
 
 class MySmartyAuthorizer(DummyAuthorizer):
@@ -89,6 +90,66 @@ class MySmartyAuthorizer(DummyAuthorizer):
             return "Goodbye."
 
 
+class MyDBFS(AbstractedFS):
+
+    def ftp2fs(self, ftppath):
+        """
+        Call _ftppath2numpath on the result of ftpnorm.
+        if ftppath's filenum == root dir, change ftppath to '/'.
+        """
+        assert isinstance(ftppath, pyftpdlib.filesystems.unicode), ftppath
+        if str(self.get_filenum(ftppath[1:])) == self.root.split(os.sep)[-1]:
+            ftppath = '/'
+        if os.path.normpath(self.root) == os.sep:
+            return os.path.normpath(self._ftppath2numpath(self.ftpnorm(ftppath)))
+        else:
+            p = self._ftppath2numpath(self.ftpnorm(ftppath)[1:])
+            return os.path.normpath(os.path.join(self.root, p))
+
+    def fs2ftp(self, fspath):
+        return super().fs2ftp(self._numpath2ftppath(fspath))
+
+    def listdir(self, path):
+        """
+        Gets ftp-filenames (not full paths) for each file.
+        NLST works. LIST doesn't work!
+        """
+        return [self._numpath2ftppath(file).split('/')[-1] for file in super().listdir(path)]
+
+    def _ftppath2numpath(self, path):
+        """
+
+        :param path: path of encrypted files
+        :return: the above path but with the filenames represented as numbers
+        """
+        if not path:
+            return ''
+        parts = path.split('/')
+        num_parts = [str(self.get_filenum('/'.join(parts[:i+1]))) for i in range(len(parts))]
+        return '/'.join(num_parts)
+
+    def _numpath2ftppath(self, path):
+        """
+
+        :param path: path of files represented by numbers
+        :return: the full actual path of the file (last in path)
+        """
+        parts = path.split(os.sep)
+        if not parts[-1]:
+            return path
+        return db.fetch_filepath(int(parts[-1]))[0]
+
+    """
+    Fetches a file's serial number from the DB, or creates one if doesn't exist
+    """
+    @staticmethod
+    def get_filenum(path):
+        filenum = db.fetch_filenum(path)
+        if not filenum:
+            return db.add_filenum(path)
+        return filenum[0]
+
+
 class MyFTPHandler(FTPHandler):
 
     def __init__(self, conn, server, ioloop=None):
@@ -127,13 +188,11 @@ class MyFTPHandler(FTPHandler):
         self.flush_account()
         self.username = username
 
-        self._registering = False
         self.handle_auth_success(username, line, "New USER '%s' registered." % self.username)
-        next_filenum = db.get_next_filenum()
-        self.fs.mkdir(str(next_filenum))
-        db.add_filenum(username, next_filenum)
-        self.authorizer.add_user(username, line, str(next_filenum), perm='elradfmwMT')
-        self.flush_account()
+        filenum = db.add_filenum(username)
+        self.fs.mkdir(str(filenum))
+        self.authorizer.add_user(username, line, str(filenum), perm='elradfmwMT')
+        self._registering = False
 
     def ftp_TAG(self, line):
         """Receive an authorization tag for a file that was now uploaded."""
@@ -152,33 +211,12 @@ class MyFTPHandler(FTPHandler):
         Creates a temporary file with the requested file data and tag from the db appended to it
         and calls the super-method with it
         """
-        filenum = db.fetch_filenum(file)[0]
-        file = self._fix_path(file, filenum)
         temp_filename = file + '__temp__'
         with self.fs.open(temp_filename, 'wb') as temp_file, self.fs.open(file, 'rb') as fd:
             temp_file.write(fd.read())
             temp_file.write(bytes.fromhex(db.fetch_tag(file)[0]))
         self._sending_temp_file = True
         return super().ftp_RETR(temp_filename)
-
-    def ftp_STOR(self, file, mode='w'):
-        filenum = db.fetch_filenum(file)
-        if not filenum:
-            filenum = db.get_next_filenum()
-            db.add_filenum(file, filenum)
-        else:
-            filenum = filenum[0]
-        return super().ftp_STOR(self._fix_path(file, filenum), mode)
-
-    def ftp_MKD(self, path):
-        filenum = db.get_next_filenum()
-        db.add_filenum(path, filenum)
-        return super().ftp_MKD(self._fix_path(path, filenum))
-
-    def ftp_CWD(self, path):
-        print(path)
-        filenum = db.fetch_filenum(path)[0]
-        return super().ftp_CWD(self._fix_path(path, filenum))
 
     def on_file_received(self, file):
         self._received_file = file
@@ -200,16 +238,13 @@ class MyFTPHandler(FTPHandler):
             return
         super().pre_process_command(line, cmd, arg)
 
-    @staticmethod
-    def _fix_path(path, filenum):
-        return os.sep.join(path.split(os.sep)[:-1] + [str(filenum)])
-
 
 def main():
     authorizer = MySmartyAuthorizer()
 
     handler = MyFTPHandler
     handler.authorizer = authorizer
+    handler.abstracted_fs = MyDBFS
 
     # Instantiate FTP server class and listen on localhost:21
     address = ('localhost', 21)

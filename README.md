@@ -6,4 +6,3 @@
 * Notify user if a file was modified (but file size unchanged) (upon file download)
 
 ### Server ###
-* Handler: Convert file and directory names to and from serial numbers

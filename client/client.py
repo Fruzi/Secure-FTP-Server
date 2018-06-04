@@ -94,7 +94,10 @@ class MyFTPClient(FTP):
         return self._cipher.encrypt(filename.encode(), is_filename=True).hex()
 
     def _decrypt_filename(self, filename):
-        return self._cipher.decrypt(bytes.fromhex(filename)).decode()
+        try:
+            return self._cipher.decrypt(bytes.fromhex(filename)).decode()
+        except ValueError:
+            return filename
 
     def _encrypt_path(self, path):
         return '/'.join([self._encrypt_filename(dirname) if MyFTPClient.is_normal_filename(dirname) else dirname
@@ -131,10 +134,21 @@ def test_directories():
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
+        print(','.join(ftp.nlst()))
+        # ftp.dir()
         ftp.mkd('stuff')
         # ftp.dir()
         ftp.cwd('stuff')
-        # ftp.pwd()
+        ftp.mkd('things')
+        ftp.cwd('things')
+        ftp.mkd('abc')
+        ftp.cwd('abc')
+        print(ftp.pwd())
+        ftp.cwd('..')
+        ftp.cwd('..')
+        ftp.cwd('..')
+        print(','.join(ftp.nlst()))
+        print(ftp.pwd())
         # ftp.dir()
         # ftp.cwd('..')
 
