@@ -95,11 +95,8 @@ class MyDBFS(AbstractedFS):
     def ftp2fs(self, ftppath):
         """
         Call _ftppath2numpath on the result of ftpnorm.
-        if ftppath's filenum == root dir, change ftppath to '/'.
         """
         assert isinstance(ftppath, pyftpdlib.filesystems.unicode), ftppath
-        if str(self.get_filenum(ftppath[1:])) == self.root.split(os.sep)[-1]:
-            ftppath = '/'
         if os.path.normpath(self.root) == os.sep:
             return os.path.normpath(self._ftppath2numpath(self.ftpnorm(ftppath)))
         else:
@@ -108,6 +105,11 @@ class MyDBFS(AbstractedFS):
 
     def fs2ftp(self, fspath):
         return super().fs2ftp(self._numpath2ftppath(fspath))
+
+    def mkhomedir(self, home):
+        homedir_num = str(self.get_filenum(home))
+        self.mkdir(homedir_num)
+        return homedir_num
 
     def listdir(self, path):
         """
@@ -134,10 +136,10 @@ class MyDBFS(AbstractedFS):
         :param path: path of files represented by numbers
         :return: the full actual path of the file (last in path)
         """
-        parts = path.split(os.sep)
-        if not parts[-1]:
-            return path
-        return db.fetch_filepath(int(parts[-1]))[0]
+        if path == self.root:
+            return '/'
+        last_file = path.split(os.sep)[-1]
+        return db.fetch_filepath(int(last_file))[0]
 
     """
     Fetches a file's serial number from the DB, or creates one if doesn't exist
@@ -188,10 +190,9 @@ class MyFTPHandler(FTPHandler):
         self.flush_account()
         self.username = username
 
-        self.handle_auth_success(username, line, "New USER '%s' registered." % self.username)
-        filenum = db.add_filenum(username)
-        self.fs.mkdir(str(filenum))
-        self.authorizer.add_user(username, line, str(filenum), perm='elradfmwMT')
+        self.handle_auth_success(username, line, "New USER '%s' registered." % username)
+        homedir_num = self.fs.mkhomedir(username)
+        self.authorizer.add_user(username, line, homedir_num, perm='elradfmwMT')
         self._registering = False
 
     def ftp_TAG(self, line):

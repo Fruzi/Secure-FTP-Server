@@ -13,11 +13,13 @@ class MyFTPClient(FTP):
 
     def login(self, user='', passwd='', acct=''):
         self._cipher = MyCipher(passwd)
+        user = self._encrypt_filename(user)
         server_key = self._cipher.derive_server_key()
         return super().login(user, server_key, acct)
 
     def register(self, user, passwd, acct=''):
         self._cipher = MyCipher(passwd)
+        user = self._encrypt_filename(user)
         resp = self.sendcmd('RGTR ' + user)
         if resp[0] == '3':
             server_key = self._cipher.derive_server_key()
@@ -150,7 +152,6 @@ def test_directories():
         print(','.join(ftp.nlst()))
         print(ftp.pwd())
         # ftp.dir()
-        # ftp.cwd('..')
 
 
 def register_users():
@@ -163,7 +164,7 @@ def register_users():
 
 def main():
     register_users()
-    test_files()
+    # test_files()
     test_directories()
 
 
