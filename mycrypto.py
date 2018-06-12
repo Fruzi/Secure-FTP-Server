@@ -62,14 +62,13 @@ class MyCipher(object):
         try:
             h.verify(tag)
         except InvalidSignature:
-            # TODO: Message invalid - do something
             return None
 
         cipher = Cipher(algorithms.AES(self._cipher_key), modes.CBC(iv), default_backend())
         decryptor = cipher.decryptor()
+        padded_pt = decryptor.update(ct) + decryptor.finalize()
 
         # unpad the decrypted plaintext (it was padded for CBC before encryption)
-        padded_pt = decryptor.update(ct) + decryptor.finalize()
         unpadder = PKCS7(256).unpadder()
         return unpadder.update(padded_pt) + unpadder.finalize()
 

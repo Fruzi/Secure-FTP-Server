@@ -1,6 +1,6 @@
 import io
 import sys
-from ftplib import FTP
+from ftplib import FTP, error_perm
 from mycrypto import MyCipher
 
 
@@ -36,9 +36,19 @@ class MyFTPClient(FTP):
         retrcmd, path = cmd.split()
         enc_path = self._encrypt_path(path)
         with io.BytesIO() as buf:
-            ret = super().retrbinary(' '.join((retrcmd, enc_path)), buf.write, blocksize, rest)
+            try:
+                ret = super().retrbinary(' '.join((retrcmd, enc_path)), buf.write, blocksize, rest)
+            except error_perm as e:
+                if str(e).startswith('555'):
+                    print(e, file=sys.stderr)
+                    return None
+                else:
+                    raise e
             buf.flush()
             dec_bytes = self._cipher.decrypt(buf.getvalue())
+            if dec_bytes is None:
+                print('The file %s has been altered!' % path, file=sys.stderr)
+                return None
         with io.BytesIO(dec_bytes) as buf:
             while True:
                 b = buf.read(blocksize)
@@ -97,7 +107,10 @@ class MyFTPClient(FTP):
 
     def _decrypt_filename(self, filename):
         try:
-            return self._cipher.decrypt(bytes.fromhex(filename)).decode()
+            ret = self._cipher.decrypt(bytes.fromhex(filename)).decode()
+            if ret is None:
+                print('The filename has been altered!', file=sys.stderr)
+                return ret
         except ValueError:
             return filename
 
@@ -122,7 +135,7 @@ def test_files():
         ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
         ftp.storbinary('STOR ' + filename, open(filename, 'rb'))
-        ftp.storbinary('STOR potato.txt', open('potato.txt', 'rb'))
+    #     ftp.storbinary('STOR potato.txt', open('potato.txt', 'rb'))
 
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
@@ -138,12 +151,12 @@ def test_directories():
         ftp.login('Rawn', '1234')
         print(','.join(ftp.nlst()))
         # ftp.dir()
-        ftp.mkd('stuff')
+        # ftp.mkd('stuff')
         # ftp.dir()
         ftp.cwd('stuff')
-        ftp.mkd('things')
+        # ftp.mkd('things')
         ftp.cwd('things')
-        ftp.mkd('abc')
+        # ftp.mkd('abc')
         ftp.cwd('abc')
         print(ftp.pwd())
         ftp.cwd('..')
@@ -163,7 +176,7 @@ def register_users():
 
 
 def main():
-    register_users()
+    # register_users()
     # test_files()
     test_directories()
 

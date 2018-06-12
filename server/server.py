@@ -13,7 +13,7 @@ class MySmartyAuthorizer(DummyAuthorizer):
 
     def __init__(self):
         db.create_user_file()
-        db.create_tag_file()
+        db.create_file_metadata()
         db.create_user_metadata()
         db.create_filenum_file()
 
@@ -101,22 +101,25 @@ class MyDBFS(AbstractedFS):
             return os.path.normpath(self._ftppath2numpath(self.ftpnorm(ftppath)))
         else:
             p = self._ftppath2numpath(self.ftpnorm(ftppath)[1:])
-            return os.path.normpath(os.path.join(self.root, p))
+            # return os.path.normpath(os.path.join(self.root, p))
+            return os.path.normpath(p)
 
     def fs2ftp(self, fspath):
         return super().fs2ftp(self._numpath2ftppath(fspath))
 
     def mkhomedir(self, home):
-        homedir_num = str(self.get_filenum(home))
-        self.mkdir(homedir_num)
-        return homedir_num
+        home_filenum = str(db.get_next_filenum())
+        db.add_numpath(os.path.realpath(home_filenum), home)
+        self.mkdir(home_filenum)
+        return home_filenum
 
     def listdir(self, path):
         """
         Gets ftp-filenames (not full paths) for each file.
         NLST works. LIST doesn't work!
         """
-        return [self._numpath2ftppath(file).split('/')[-1] for file in super().listdir(path)]
+        return [self._numpath2ftppath(os.path.join(path, file)).split('/')[-1]
+                for file in super().listdir(path)]
 
     def _ftppath2numpath(self, path):
         """
@@ -124,11 +127,10 @@ class MyDBFS(AbstractedFS):
         :param path: path of encrypted files
         :return: the above path but with the filenames represented as numbers
         """
-        if not path:
-            return ''
-        parts = path.split('/')
-        num_parts = [str(self.get_filenum('/'.join(parts[:i+1]))) for i in range(len(parts))]
-        return '/'.join(num_parts)
+        # if not path:
+        #     return ''
+        # num_parts = [str(self.get_filenum('/'.join(parts[:i+1]))) for i in range(len(parts))]
+        return self.get_numpath(path)
 
     def _numpath2ftppath(self, path):
         """
@@ -138,18 +140,27 @@ class MyDBFS(AbstractedFS):
         """
         if path == self.root:
             return '/'
-        last_file = path.split(os.sep)[-1]
-        return db.fetch_filepath(int(last_file))[0]
+        return db.fetch_filepath(path)[0]
 
     """
-    Fetches a file's serial number from the DB, or creates one if doesn't exist
+    Fetches a file's numpath from the DB, or creates one if doesn't exist
     """
-    @staticmethod
-    def get_filenum(path):
-        filenum = db.fetch_filenum(path)
-        if not filenum:
-            return db.add_filenum(path)
-        return filenum[0]
+    def get_numpath(self, path):
+        if not path:
+            return self.root
+        numpath = db.fetch_numpath(path)
+        if not numpath:
+            new_num = db.get_next_filenum()
+            parent_path = '/'.join(path.split('/')[:-1])
+            if not parent_path:
+                parent_path = self.root
+            else:
+                parent_path = db.fetch_numpath(parent_path)[0]
+            numpath = os.sep.join((parent_path, str(new_num)))
+            db.add_numpath(numpath, path)
+        else:
+            numpath = numpath[0]
+        return numpath
 
 
 class MyFTPHandler(FTPHandler):
@@ -184,6 +195,9 @@ class MyFTPHandler(FTPHandler):
     def ftp_PASS(self, line):
         if not self._registering:
             super().ftp_PASS(line)
+            filesizes = db.fetch_all_file_metadata()
+            # str = [filenum for filenum, size in filesizes
+            #        if size != self.fs.getsize(db.fet)
             return
 
         username = self.username
@@ -200,10 +214,12 @@ class MyFTPHandler(FTPHandler):
         if not self._received_file:
             self.respond("503 Bad sequence of commands: use STOR first.")
             return
-        if not db.fetch_tag(self._received_file):
-            db.add_tag(self._received_file, line)
+        filesize = self.fs.getsize(self._received_file)
+        filenum = self._received_file.split(os.sep)[-1]
+        if not db.fetch_tag(filenum):
+            db.add_file_meta(filenum, line, filesize)
         else:
-            db.update_tag(self._received_file, line)
+            db.update_file_meta(filenum, line, filesize)
         self._received_file = None
         self.respond("250 File transfer completed.")
 
@@ -212,12 +228,23 @@ class MyFTPHandler(FTPHandler):
         Creates a temporary file with the requested file data and tag from the db appended to it
         and calls the super-method with it
         """
+        filenum = file.split(os.sep)[-1]
+        stored_size = db.fetch_size(filenum)[0]
+        if stored_size != self.fs.getsize(file):
+            self.respond('555 File size changed.')
+            return
         temp_filename = file + '__temp__'
         with self.fs.open(temp_filename, 'wb') as temp_file, self.fs.open(file, 'rb') as fd:
             temp_file.write(fd.read())
-            temp_file.write(bytes.fromhex(db.fetch_tag(file)[0]))
+            temp_file.write(bytes.fromhex(db.fetch_tag(filenum)[0]))
+
         self._sending_temp_file = True
         return super().ftp_RETR(temp_filename)
+
+    def ftp_DELE(self, path):
+        if super().ftp_DELE(path) is not None:
+            filenum = path.split(os.sep)[-1]
+            db.remove_file_by_num(filenum)
 
     def on_file_received(self, file):
         self._received_file = file
