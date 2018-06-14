@@ -74,12 +74,14 @@ class MyFTPClient(FTP):
         """Decrypt filenames received from LIST or NLST commands and print them"""
         if cmd not in ('LIST', 'NLST'):
             return super().retrlines(cmd, callback)
+        if callback is None:
+            callback = print
 
         def decrypt_line(line):
             line_parts = line.rsplit(' ', maxsplit=1)
             dec_filename = self._decrypt_filename(line_parts[-1])
             return ' '.join(line_parts[:-1] + [dec_filename])
-        return super().retrlines(cmd, lambda line: print(decrypt_line(line)))
+        return super().retrlines(cmd, lambda line: callback(decrypt_line(line)))
 
     def rename(self, fromname, toname):
         return super().rename(self._encrypt_path(fromname), self._encrypt_path(toname))
@@ -110,7 +112,7 @@ class MyFTPClient(FTP):
             ret = self._cipher.decrypt(bytes.fromhex(filename)).decode()
             if ret is None:
                 print('The filename has been altered!', file=sys.stderr)
-                return ret
+            return ret
         except ValueError:
             return filename
 
@@ -140,7 +142,6 @@ def test_files():
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
-        # ftp.dir()
         with open('.'.join((name + '_from_server', ext)), 'wb') as outfile:
             ftp.retrbinary('RETR ' + filename, outfile.write)
 
@@ -149,22 +150,20 @@ def test_directories():
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
         ftp.login('Rawn', '1234')
-        print(','.join(ftp.nlst()))
-        # ftp.dir()
-        # ftp.mkd('stuff')
-        # ftp.dir()
+        print(', '.join(ftp.nlst()))
+        ftp.mkd('stuff')
         ftp.cwd('stuff')
-        # ftp.mkd('things')
+        ftp.mkd('things')
         ftp.cwd('things')
-        # ftp.mkd('abc')
+        ftp.mkd('abc')
         ftp.cwd('abc')
         print(ftp.pwd())
         ftp.cwd('..')
         ftp.cwd('..')
-        ftp.cwd('..')
-        print(','.join(ftp.nlst()))
         print(ftp.pwd())
-        # ftp.dir()
+        ftp.cwd('..')
+        print(', '.join(ftp.nlst()))
+        print(ftp.pwd())
 
 
 def register_users():
@@ -176,8 +175,8 @@ def register_users():
 
 
 def main():
-    # register_users()
-    # test_files()
+    register_users()
+    test_files()
     test_directories()
 
 

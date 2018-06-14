@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import db
 from mycrypto import MyCipher
@@ -15,7 +16,6 @@ class MySmartyAuthorizer(DummyAuthorizer):
         db.create_user_file()
         db.create_file_metadata()
         db.create_user_metadata()
-        db.create_filenum_file()
 
     def add_user(self, username, password, homedir, perm='elr',
                  msg_login="Login successful.", msg_quit="Goodbye."):
@@ -93,71 +93,36 @@ class MySmartyAuthorizer(DummyAuthorizer):
 class MyDBFS(AbstractedFS):
 
     def ftp2fs(self, ftppath):
-        """
-        Call _ftppath2numpath on the result of ftpnorm.
-        """
-        assert isinstance(ftppath, pyftpdlib.filesystems.unicode), ftppath
-        if os.path.normpath(self.root) == os.sep:
-            return os.path.normpath(self._ftppath2numpath(self.ftpnorm(ftppath)))
-        else:
-            p = self._ftppath2numpath(self.ftpnorm(ftppath)[1:])
-            # return os.path.normpath(os.path.join(self.root, p))
-            return os.path.normpath(p)
+        return self.get_numpath(self.ftpnorm(ftppath))
 
     def fs2ftp(self, fspath):
-        return super().fs2ftp(self._numpath2ftppath(fspath))
+        return db.fetch_filepath(fspath)[0]
 
-    def mkhomedir(self, home):
-        home_filenum = str(db.get_next_filenum())
-        db.add_numpath(os.path.realpath(home_filenum), home)
-        self.mkdir(home_filenum)
-        return home_filenum
+    def mkhomedir(self):
+        home_filenum = db.get_next_filenum()
+        home_numpath = os.path.realpath(str(home_filenum))
+        db.add_numpath(home_filenum, home_numpath, '/')
+        self.mkdir(home_numpath)
+        return home_numpath
 
     def listdir(self, path):
         """
         Gets ftp-filenames (not full paths) for each file.
         NLST works. LIST doesn't work!
         """
-        return [self._numpath2ftppath(os.path.join(path, file)).split('/')[-1]
-                for file in super().listdir(path)]
-
-    def _ftppath2numpath(self, path):
-        """
-
-        :param path: path of encrypted files
-        :return: the above path but with the filenames represented as numbers
-        """
-        # if not path:
-        #     return ''
-        # num_parts = [str(self.get_filenum('/'.join(parts[:i+1]))) for i in range(len(parts))]
-        return self.get_numpath(path)
-
-    def _numpath2ftppath(self, path):
-        """
-
-        :param path: path of files represented by numbers
-        :return: the full actual path of the file (last in path)
-        """
-        if path == self.root:
-            return '/'
-        return db.fetch_filepath(path)[0]
+        return [db.fetch_filename(filenum) for filenum in super().listdir(path)]
 
     """
     Fetches a file's numpath from the DB, or creates one if doesn't exist
     """
     def get_numpath(self, path):
-        if not path:
-            return self.root
-        numpath = db.fetch_numpath(path)
+        numpath = db.fetch_numpath_by_ftppath(path)
         if not numpath:
             new_num = db.get_next_filenum()
-            parent_path = '/'.join(path.split('/')[:-1])
-            if not parent_path:
-                parent_path = self.root
-            else:
-                parent_path = db.fetch_numpath(parent_path)[0]
-            numpath = os.sep.join((parent_path, str(new_num)))
-            db.add_numpath(numpath, path)
+            parent_ftppath = '/'.join(path.split('/')[:-1]) or '/'
+            parent_numpath = db.fetch_numpath_by_ftppath(parent_ftppath)[0]
+            numpath = os.sep.join((parent_numpath, str(new_num)))
+            db.add_numpath(new_num, numpath, path)
         else:
             numpath = numpath[0]
         return numpath
@@ -195,9 +160,11 @@ class MyFTPHandler(FTPHandler):
     def ftp_PASS(self, line):
         if not self._registering:
             super().ftp_PASS(line)
-            filesizes = db.fetch_all_file_metadata()
-            # str = [filenum for filenum, size in filesizes
-            #        if size != self.fs.getsize(db.fet)
+            filesizes = db.fetch_all_file_sizes()
+            altered_files = [ftppath for numpath, ftppath, size in filesizes if size != self.fs.getsize(numpath)]
+            if altered_files:
+                # TODO: This message needs to be sent to the client somehow.
+                print('The following files\' sizes have been altered: %s' % ', '.join(altered_files), file=sys.stderr)
             return
 
         username = self.username
@@ -205,7 +172,7 @@ class MyFTPHandler(FTPHandler):
         self.username = username
 
         self.handle_auth_success(username, line, "New USER '%s' registered." % username)
-        homedir_num = self.fs.mkhomedir(username)
+        homedir_num = self.fs.mkhomedir()
         self.authorizer.add_user(username, line, homedir_num, perm='elradfmwMT')
         self._registering = False
 
