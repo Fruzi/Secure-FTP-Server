@@ -14,7 +14,7 @@ class MySmartyAuthorizer(DummyAuthorizer):
 
     def __init__(self):
         db.create_user_file()
-        db.create_file_metadata()
+        # db.create_file_metadata()
         db.create_user_metadata()
 
     def add_user(self, username, password, homedir, perm='elr',
@@ -93,39 +93,27 @@ class MySmartyAuthorizer(DummyAuthorizer):
 class MyDBFS(AbstractedFS):
 
     def ftp2fs(self, ftppath):
-        return self.get_numpath(self.ftpnorm(ftppath))
+        return self.cmd_channel.file_meta_handler.get_numpath(self.ftpnorm(ftppath))
 
     def fs2ftp(self, fspath):
-        return db.fetch_filepath(fspath)[0]
+        return self.cmd_channel.file_meta_handler.fetch_filepath(fspath)[0]
 
-    def mkhomedir(self):
-        home_filenum = db.get_next_filenum()
-        home_numpath = os.path.realpath(str(home_filenum))
-        db.add_numpath(home_filenum, home_numpath, '/')
-        self.mkdir(home_numpath)
-        return home_numpath
+    def mkhomedir(self, dirnum):
+        # home_filenum = db.get_next_filenum()
+        # home_numpath = os.path.realpath(str(home_filenum))
+        # db.add_numpath(dirnum, home_numpath, '/')
+        self.mkdir(dirnum)
+        return
 
     def listdir(self, path):
         """
         Gets ftp-filenames (not full paths) for each file.
         NLST works. LIST doesn't work!
         """
-        return [db.fetch_filename(filenum) for filenum in super().listdir(path)]
+        return [self.cmd_channel.file_meta_handler.fetch_filename(filenum) for filenum in super().listdir(path)
+                if not filenum.endswith('.db')]
 
-    """
-    Fetches a file's numpath from the DB, or creates one if doesn't exist
-    """
-    def get_numpath(self, path):
-        numpath = db.fetch_numpath_by_ftppath(path)
-        if not numpath:
-            new_num = db.get_next_filenum()
-            parent_ftppath = '/'.join(path.split('/')[:-1]) or '/'
-            parent_numpath = db.fetch_numpath_by_ftppath(parent_ftppath)[0]
-            numpath = os.sep.join((parent_numpath, str(new_num)))
-            db.add_numpath(new_num, numpath, path)
-        else:
-            numpath = numpath[0]
-        return numpath
+
 
 
 class MyFTPHandler(FTPHandler):
@@ -146,6 +134,7 @@ class MyFTPHandler(FTPHandler):
         self._registering = False
         self._received_file = None
         self._sending_temp_file = False
+        self.file_meta_handler = False
 
     def ftp_RGTR(self, line):
         """Register a new user."""
@@ -160,7 +149,7 @@ class MyFTPHandler(FTPHandler):
     def ftp_PASS(self, line):
         if not self._registering:
             super().ftp_PASS(line)
-            filesizes = db.fetch_all_file_sizes()
+            filesizes = self.file_meta_handler.fetch_all_file_sizes()
             altered_files = [ftppath for numpath, ftppath, size in filesizes if size != self.fs.getsize(numpath)]
             if altered_files:
                 # TODO: This message needs to be sent to the client somehow.
@@ -170,10 +159,11 @@ class MyFTPHandler(FTPHandler):
         username = self.username
         self.flush_account()
         self.username = username
-
-        self.handle_auth_success(username, line, "New USER '%s' registered." % username)
-        homedir_num = self.fs.mkhomedir()
-        self.authorizer.add_user(username, line, homedir_num, perm='elradfmwMT')
+        homedir = db.fetch_next_user_num()
+        self.handle_auth_success(str(homedir), line, "New USER '%s' registered." % username)
+        self.fs.mkdir(str(homedir))
+        self.file_meta_handler.create_file_metadata()
+        self.authorizer.add_user(username, line, str(homedir), perm='elradfmwMT')
         self._registering = False
 
     def ftp_TAG(self, line):
@@ -183,10 +173,10 @@ class MyFTPHandler(FTPHandler):
             return
         filesize = self.fs.getsize(self._received_file)
         filenum = self._received_file.split(os.sep)[-1]
-        if not db.fetch_tag(filenum):
-            db.add_file_meta(filenum, line, filesize)
+        if not self.file_meta_handler.fetch_tag(filenum):
+            self.file_meta_handler.add_file_meta(filenum, line, filesize)
         else:
-            db.update_file_meta(filenum, line, filesize)
+            self.file_meta_handler.update_file_meta(filenum, line, filesize)
         self._received_file = None
         self.respond("250 File transfer completed.")
 
@@ -196,14 +186,14 @@ class MyFTPHandler(FTPHandler):
         and calls the super-method with it
         """
         filenum = file.split(os.sep)[-1]
-        stored_size = db.fetch_size(filenum)[0]
+        stored_size = self.file_meta_handler.fetch_size(filenum)[0]
         if stored_size != self.fs.getsize(file):
             self.respond('555 File size changed.')
             return
         temp_filename = file + '__temp__'
         with self.fs.open(temp_filename, 'wb') as temp_file, self.fs.open(file, 'rb') as fd:
             temp_file.write(fd.read())
-            temp_file.write(bytes.fromhex(db.fetch_tag(filenum)[0]))
+            temp_file.write(bytes.fromhex(self.file_meta_handler.fetch_tag(filenum)[0]))
 
         self._sending_temp_file = True
         return super().ftp_RETR(temp_filename)
@@ -211,7 +201,7 @@ class MyFTPHandler(FTPHandler):
     def ftp_DELE(self, path):
         if super().ftp_DELE(path) is not None:
             filenum = path.split(os.sep)[-1]
-            db.remove_file_by_num(filenum)
+            self.file_meta_handler.remove_file_by_num(filenum)
 
     def on_file_received(self, file):
         self._received_file = file
@@ -232,6 +222,10 @@ class MyFTPHandler(FTPHandler):
             self.process_command(cmd, arg)
             return
         super().pre_process_command(line, cmd, arg)
+
+    def handle_auth_success(self, home, password, msg_login):
+        self.file_meta_handler = db.FileMetaHandler(home)
+        super().handle_auth_success(home, password, msg_login)
 
 
 def main():

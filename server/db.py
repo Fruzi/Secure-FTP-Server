@@ -35,21 +35,126 @@ def create_user_file():
                             hashed_pass BLOB NOT NULL)""")
 
 
-# check if tagfile exits, if not then create it.
-def create_file_metadata():
-    file_meta_existed = os.path.isfile(file_meta_db)
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        if not file_meta_existed:
-            cursor.execute("""CREATE TABLE Filenums (
-                                        filenum INTEGER PRIMARY KEY NOT NULL,
-                                        numpath TEXT NOT NULL,
-                                        ftppath TEXT NOT NULL)""")
-            cursor.execute("""CREATE TABLE FileMetadata (
-                            tag TEXT NOT NULL,
-                            size INTEGER NOT NULL,
-                            filenum INTEGER NOT NULL,
-                            FOREIGN KEY (filenum) REFERENCES Filenums(filenum))""")
+class FileMetaHandler(object):
+
+    def __init__(self, homedir):
+        self.homedir = str(homedir)
+        self.meta_db_path = os.path.realpath(self.homedir) + os.sep + 'file_metadata.db'
+
+    def create_file_metadata(self):
+        file_meta_existed = os.path.isfile(self.meta_db_path)
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            if not file_meta_existed:
+                cursor.execute("""CREATE TABLE Filenums (
+                                            filenum INTEGER PRIMARY KEY NOT NULL,
+                                            numpath TEXT NOT NULL,
+                                            ftppath TEXT NOT NULL)""")
+                cursor.execute("""CREATE TABLE FileMetadata (
+                                tag TEXT NOT NULL,
+                                size INTEGER NOT NULL,
+                                filenum INTEGER NOT NULL,
+                                FOREIGN KEY (filenum) REFERENCES Filenums(filenum))""")
+                cursor.execute("""INSERT INTO Filenums VALUES (?, ?, ?)""", (self.homedir, ROOT+self.homedir, '/'))
+
+    def add_file_meta(self, _filenum, _tag, _size):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""INSERT INTO FileMetadata VALUES (?,?,?)""", (_tag, _size, _filenum))
+            return cursor.lastrowid
+
+    def update_file_meta(self, _filenum, _tag, _size):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""UPDATE FileMetadata SET tag = (?), size = (?) WHERE filenum = (?)""", (_tag, _size, _filenum))
+
+    def fetch_tag(self, _filenum):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT tag FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
+            return cursor.fetchone()
+
+    def fetch_size(self, _filenum):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT size FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
+            return cursor.fetchone()
+
+    def fetch_all_file_sizes(self):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT numpath, ftppath, size FROM FileMetadata
+                              INNER JOIN Filenums ON Filenums.filenum = FileMetadata.filenum""")
+            return cursor.fetchall()
+
+    def add_numpath(self, _filenum, _numpath, _ftppath):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""INSERT INTO Filenums VALUES (?,?,?)""", (_filenum, _numpath, _ftppath))
+            return cursor.lastrowid
+
+    def fetch_filenum(self, _ftppath):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT serial_num FROM Filenums WHERE ftppath = (?)""", (_ftppath,))
+            return cursor.fetchone()
+
+    def fetch_numpath_by_ftppath(self, _ftppath):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT numpath FROM Filenums WHERE ftppath = (?)""", (_ftppath,))
+            return cursor.fetchone()
+
+    def fetch_numpath_by_filenum(self, _filenum):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT numpath FROM Filenums WHERE filenum = (?)""", (_filenum,))
+            return cursor.fetchone()
+
+    def fetch_filepath(self, _numpath):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT ftppath FROM Filenums WHERE numpath = (?)""", (_numpath,))
+            return cursor.fetchone()
+
+    def fetch_filename(self, _filenum):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT ftppath FROM Filenums WHERE filenum = (?)""", (_filenum,))
+            ftppath = cursor.fetchone()
+            if ftppath:
+                ftppath = ftppath[0].split('/')[-1]
+            return ftppath
+
+    def get_next_filenum(self):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT MAX(filenum) FROM Filenums""")
+            max_num = cursor.fetchone()[0]
+            return (max_num + 1) if max_num is not None else 0
+
+    def remove_file_by_num(self, _filenum):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""DELETE * FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
+            cursor.execute("""DELETE * FROM Filenums WHERE filenum = (?)""", (_filenum,))
+            return cursor.fetchone()
+
+    """
+    Fetches a file's numpath from the DB, or creates one if doesn't exist
+    """
+    def get_numpath(self, path):
+        numpath = self.fetch_numpath_by_ftppath(path)
+        if not numpath:
+            new_num = self.get_next_filenum()
+            parent_ftppath = '/'.join(path.split('/')[:-1]) or '/'
+            print(parent_ftppath)
+            parent_numpath = self.fetch_numpath_by_ftppath(parent_ftppath)[0]
+            numpath = os.sep.join((parent_numpath, str(new_num)))
+            self.add_numpath(new_num, numpath, path)
+        else:
+            numpath = numpath[0]
+        return numpath
 
 
 def create_user_metadata():
@@ -117,109 +222,23 @@ def fetch_user(_name):
         return cursor.fetchone()
 
 
+def fetch_next_user_num():
+    with sqlite3.connect(users_db) as dbcon:
+        cursor = dbcon.cursor()
+        cursor.execute("""SELECT Count(*) FROM Users""")
+        return cursor.fetchone()[0]+1
+
+
 def has_user(_name):
     if fetch_user(_name):
         return 1
     return 0
 
 
-def add_file_meta(_filenum, _tag, _size):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""INSERT INTO FileMetadata VALUES (?,?,?)""", (_tag, _size, _filenum))
-        return cursor.lastrowid
-
-
-# Updates an existing file's tag in the tagfile.
-def update_file_meta(_filenum, _tag, _size):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""UPDATE FileMetadata SET tag = (?), size = (?) WHERE filenum = (?)""", (_tag, _size, _filenum))
-
-
-# Returns a tuple with the tag for the given (encrypted) filename.
-def fetch_tag(_filenum):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT tag FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
-        return cursor.fetchone()
-
-
-def fetch_size(_filenum):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT size FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
-        return cursor.fetchone()
-
-
-def fetch_all_file_sizes():
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT numpath, ftppath, size FROM FileMetadata
-                          INNER JOIN Filenums ON Filenums.filenum = FileMetadata.filenum""")
-        return cursor.fetchall()
 
 
 # Adds a file path to filenums.db.
-def add_numpath(_filenum, _numpath, _ftppath):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""INSERT INTO Filenums VALUES (?,?,?)""", (_filenum, _numpath, _ftppath))
-        return cursor.lastrowid
 
-
-def fetch_filenum(_ftppath):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT serial_num FROM Filenums WHERE ftppath = (?)""", (_ftppath,))
-        return cursor.fetchone()
-
-
-def fetch_numpath_by_ftppath(_ftppath):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT numpath FROM Filenums WHERE ftppath = (?)""", (_ftppath,))
-        return cursor.fetchone()
-
-
-def fetch_numpath_by_filenum(_filenum):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT numpath FROM Filenums WHERE filenum = (?)""", (_filenum,))
-        return cursor.fetchone()
-
-
-def fetch_filepath(_numpath):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT ftppath FROM Filenums WHERE numpath = (?)""", (_numpath,))
-        return cursor.fetchone()
-
-
-def fetch_filename(_filenum):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT ftppath FROM Filenums WHERE filenum = (?)""", (_filenum,))
-        ftppath = cursor.fetchone()
-        if ftppath:
-            ftppath = ftppath[0].split('/')[-1]
-        return ftppath
-
-
-def get_next_filenum():
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""SELECT MAX(filenum) FROM Filenums""")
-        max_num = cursor.fetchone()[0]
-        return (max_num + 1) if max_num is not None else 0
-
-
-def remove_file_by_num(_filenum):
-    with sqlite3.connect(file_meta_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""DELETE * FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
-        cursor.execute("""DELETE * FROM Filenums WHERE filenum = (?)""", (_filenum,))
-        return cursor.fetchone()
 
 
 if __name__ == '__main__':

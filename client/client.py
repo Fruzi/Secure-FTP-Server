@@ -133,15 +133,15 @@ def test_files():
     filename = 'potato.txt' if len(sys.argv) < 2 else sys.argv[1]
     name, ext = filename.split('.')
 
-    with MyFTPClient('localhost') as ftp:
-        ftp.set_debuglevel(1)
-        ftp.login('Rawn', '1234')
-        ftp.storbinary('STOR ' + filename, open(filename, 'rb'))
+    # with MyFTPClient('localhost') as ftp:
+    #     ftp.set_debuglevel(1)
+    #     ftp.login('Uzi', '5678')
+    #     ftp.storbinary('STOR ' + filename, open(filename, 'rb'))
     #     ftp.storbinary('STOR potato.txt', open('potato.txt', 'rb'))
 
     with MyFTPClient('localhost') as ftp:
         ftp.set_debuglevel(1)
-        ftp.login('Rawn', '1234')
+        ftp.login('Uzi', '5678')
         with open('.'.join((name + '_from_server', ext)), 'wb') as outfile:
             ftp.retrbinary('RETR ' + filename, outfile.write)
 
@@ -175,9 +175,9 @@ def register_users():
 
 
 def main():
-    register_users()
+    # register_users()
     test_files()
-    test_directories()
+    # test_directories()
 
 
 if __name__ == '__main__':
