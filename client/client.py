@@ -39,7 +39,12 @@ class MyFTPClient(FTP):
         self._cipher = MyCipher(passwd)
         user = self._encrypt_filename(user)
         server_key = self._cipher.derive_server_key()
-        return super().login(user, server_key, acct)
+        super().login(user, server_key, acct)
+        try:
+            self.getresp()
+        except error_perm as e:
+            print(' '.join([self._decrypt_path(word) if len(word) == 160 or (len(word) == 161 and word[0] == '/')
+                            else word for word in str(e).split(' ')[4:]]), file=sys.stderr)
 
     def register(self, user, passwd, acct=''):
         self._cipher = MyCipher(passwd)
@@ -117,7 +122,6 @@ class MyFTPClient(FTP):
         return super().cwd(self._encrypt_path(dirname))
 
     def size(self, filename):
-        self.voidcmd('TYPE I')
         return super().size(self._encrypt_path(filename))
 
     def mkd(self, dirname):
