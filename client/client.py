@@ -15,7 +15,12 @@ class MyFTPClient(FTP):
         self._cipher = MyCipher(passwd)
         user = self._encrypt_filename(user)
         server_key = self._cipher.derive_server_key()
-        return super().login(user, server_key, acct)
+        super().login(user, server_key, acct)
+        try:
+            self.getresp()
+        except error_perm as e:
+            print(' '.join([self._decrypt_path(word) if len(word) == 160 or (len(word) == 161 and word[0] == '/')
+                            else word for word in str(e).split(' ')[4:]]), file=sys.stderr)
 
     def register(self, user, passwd, acct=''):
         self._cipher = MyCipher(passwd)
@@ -140,7 +145,7 @@ def test_files():
     #     ftp.storbinary('STOR potato.txt', open('potato.txt', 'rb'))
 
     with MyFTPClient('localhost') as ftp:
-        ftp.set_debuglevel(1)
+        ftp.set_debuglevel(0)
         ftp.login('Uzi', '5678')
         with open('.'.join((name + '_from_server', ext)), 'wb') as outfile:
             ftp.retrbinary('RETR ' + filename, outfile.write)

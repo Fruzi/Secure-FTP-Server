@@ -152,8 +152,9 @@ class MyFTPHandler(FTPHandler):
             filesizes = self.file_meta_handler.fetch_all_file_sizes()
             altered_files = [ftppath for numpath, ftppath, size in filesizes if size != self.fs.getsize(numpath)]
             if altered_files:
-                # TODO: This message needs to be sent to the client somehow.
-                print('The following files\' sizes have been altered: %s' % ', '.join(altered_files), file=sys.stderr)
+                self.respond('556 The following files\' sizes have been altered: %s' % ', '.join(altered_files))
+            else:
+                self.respond('230 All file unchanged')
             return
 
         username = self.username
