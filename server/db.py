@@ -235,12 +235,6 @@ def has_user(_name):
     return 0
 
 
-
-
-# Adds a file path to filenums.db.
-
-
-
 if __name__ == '__main__':
     main()
 

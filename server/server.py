@@ -14,7 +14,7 @@ class MySmartyAuthorizer(DummyAuthorizer):
 
     def __init__(self):
         db.create_user_file()
-        db.create_file_metadata()
+        # db.create_file_metadata()
         db.create_user_metadata()
 
     def add_user(self, username, password, homedir, perm='elr',
@@ -112,8 +112,6 @@ class MyDBFS(AbstractedFS):
         """
         return [self.cmd_channel.file_meta_handler.fetch_filename(filenum) for filenum in super().listdir(path)
                 if not filenum.endswith('.db')]
-
-
 
 
 class MyFTPHandler(FTPHandler):
