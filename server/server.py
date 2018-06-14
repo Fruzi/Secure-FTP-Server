@@ -112,10 +112,10 @@ class MyDBFS(AbstractedFS):
         """
         return [db.fetch_filename(filenum) for filenum in super().listdir(path)]
 
-    """
-    Fetches a file's numpath from the DB, or creates one if doesn't exist
-    """
     def get_numpath(self, path):
+        """
+        Fetches a file's numpath from the DB, or creates one if doesn't exist
+        """
         numpath = db.fetch_numpath_by_ftppath(path)
         if not numpath:
             new_num = db.get_next_filenum()

@@ -11,6 +11,30 @@ class MyFTPClient(FTP):
         self._cipher = None
         super().__init__(host, user, passwd, acct, timeout, source_address)
 
+    def _encrypt_filename(self, filename):
+        return self._cipher.encrypt(filename.encode(), is_filename=True).hex()
+
+    def _decrypt_filename(self, filename):
+        try:
+            ret = self._cipher.decrypt(bytes.fromhex(filename)).decode()
+            if ret is None:
+                print('The filename has been altered!', file=sys.stderr)
+            return ret
+        except ValueError:
+            return filename
+
+    @staticmethod
+    def _is_normal_filename(filename):
+        return not (not filename or filename in ('.', '..'))
+
+    def _encrypt_path(self, path):
+        return '/'.join([self._encrypt_filename(dirname) if self._is_normal_filename(dirname) else dirname
+                         for dirname in path.split('/')])
+
+    def _decrypt_path(self, path):
+        return '/'.join([self._decrypt_filename(dirname) if self._is_normal_filename(dirname) else dirname
+                         for dirname in path.split('/')])
+
     def login(self, user='', passwd='', acct=''):
         self._cipher = MyCipher(passwd)
         user = self._encrypt_filename(user)
@@ -93,6 +117,7 @@ class MyFTPClient(FTP):
         return super().cwd(self._encrypt_path(dirname))
 
     def size(self, filename):
+        self.voidcmd('TYPE I')
         return super().size(self._encrypt_path(filename))
 
     def mkd(self, dirname):
@@ -104,29 +129,74 @@ class MyFTPClient(FTP):
     def pwd(self):
         return self._decrypt_path(super().pwd())
 
-    def _encrypt_filename(self, filename):
-        return self._cipher.encrypt(filename.encode(), is_filename=True).hex()
+    def client_logout(self):
+        self.__exit__()
+        return None
 
-    def _decrypt_filename(self, filename):
-        try:
-            ret = self._cipher.decrypt(bytes.fromhex(filename)).decode()
-            if ret is None:
-                print('The filename has been altered!', file=sys.stderr)
-            return ret
-        except ValueError:
-            return filename
+    def client_upload_file(self):
+        filename = input('Please enter a filename\n').strip()
+        self.storbinary('STOR ' + filename, open(filename, 'rb'))
+        return self
 
-    def _encrypt_path(self, path):
-        return '/'.join([self._encrypt_filename(dirname) if MyFTPClient.is_normal_filename(dirname) else dirname
-                         for dirname in path.split('/')])
+    def client_download_file(self):
+        filename = input('Please enter a filename\n').strip()
+        with open(filename, 'wb') as outfile:
+            self.retrbinary('RETR ' + filename, outfile.write)
+        return self
 
-    def _decrypt_path(self, path):
-        return '/'.join([self._decrypt_filename(dirname) if MyFTPClient.is_normal_filename(dirname) else dirname
-                         for dirname in path.split('/')])
+    def client_list_files(self):
+        print(', '.join(self.nlst()))
+        return self
+
+    def client_size(self):
+        filename = input('Please enter a filename\n').strip()
+        print(self.size(filename))
+        return self
+
+    def client_rename(self):
+        fromname = input('Please enter a filename\n').strip()
+        toname = input('Please enter a new name\n').strip()
+        print(self.rename(fromname, toname))
+        return self
+
+    def client_delete_file(self):
+        filename = input('Please enter a filename\n').strip()
+        print(self.delete(filename))
+        return self
+
+    def client_create_folder(self):
+        dirname = input('Please enter a directory name\n').strip()
+        print(self.mkd(dirname))
+        return self
+
+    def client_delete_folder(self):
+        dirname = input('Please enter a directory name\n').strip()
+        print(self.rmd(dirname))
+        return self
+
+    def client_cwd(self):
+        dirname = input('Please enter a directory name\n').strip()
+        print(self.cwd(dirname))
+        return self
+
+    def client_pwd(self):
+        print(self.pwd())
+        return self
 
     @staticmethod
-    def is_normal_filename(filename):
-        return not (not filename or filename in ('.', '..'))
+    def client_login(*args):
+        username = input('Please enter a username\n').strip()
+        password = input('Please enter a password\n').strip()
+        ftp = MyFTPClient('localhost', user=username, passwd=password).__enter__()
+        return ftp
+
+    @staticmethod
+    def client_register(*args):
+        username = input('Please enter a username\n').strip()
+        password = input('Please enter a password\n').strip()
+        with MyFTPClient('localhost') as ftp:
+            ftp.register(username, password)
+        return None
 
 
 def test_files():
@@ -174,10 +244,82 @@ def register_users():
         ftp.register('Amit', 'blabla')
 
 
+logged_out_menu = [
+    {
+        'name': 'Register',
+        'fun': getattr(MyFTPClient, 'client_register')
+    },
+    {
+        'name': 'Log in',
+        'fun': getattr(MyFTPClient, 'client_login')
+    }
+]
+
+
+logged_in_menu = [
+    {
+        'name': 'List files',
+        'fun': getattr(MyFTPClient, 'client_list_files')
+    },
+    {
+        'name': 'Upload file',
+        'fun': getattr(MyFTPClient, 'client_upload_file')
+    },
+    {
+        'name': 'Download file',
+        'fun': getattr(MyFTPClient, 'client_download_file')
+    },
+    {
+        'name': 'Rename file or folder',
+        'fun': getattr(MyFTPClient, 'client_rename')
+    },
+    {
+        'name': 'Get file size',
+        'fun': getattr(MyFTPClient, 'client_size')
+    },
+    {
+        'name': 'Delete file',
+        'fun': getattr(MyFTPClient, 'client_delete_file')
+    },
+    {
+        'name': 'Create folder',
+        'fun': getattr(MyFTPClient, 'client_create_folder')
+    },
+    {
+        'name': 'Delete folder',
+        'fun': getattr(MyFTPClient, 'client_delete_folder')
+    },
+    {
+        'name': 'Change working directory',
+        'fun': getattr(MyFTPClient, 'client_cwd')
+    },
+    {
+        'name': 'Show current working directory',
+        'fun': getattr(MyFTPClient, 'client_pwd')
+    },
+    {
+        'name': 'Log out',
+        'fun': getattr(MyFTPClient, 'client_logout')
+    }
+]
+
+
+def display_menu(menu):
+    print('Choose an operation:')
+    for idx, menu_item in enumerate(menu):
+        print('%d. %s' % (idx + 1, menu_item['name']))
+
+
 def main():
-    register_users()
-    test_files()
-    test_directories()
+    # register_users()
+    # test_files()
+    # test_directories()
+    ftp = None
+    while True:
+        menu = logged_in_menu if ftp else logged_out_menu
+        display_menu(menu)
+        choice = int(input().strip())
+        ftp = menu[choice - 1]['fun'](ftp)
 
 
 if __name__ == '__main__':

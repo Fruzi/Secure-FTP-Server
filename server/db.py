@@ -201,9 +201,7 @@ def fetch_filename(_filenum):
         cursor = dbcon.cursor()
         cursor.execute("""SELECT ftppath FROM Filenums WHERE filenum = (?)""", (_filenum,))
         ftppath = cursor.fetchone()
-        if ftppath:
-            ftppath = ftppath[0].split('/')[-1]
-        return ftppath
+        return ftppath[0].split('/')[-1] if ftppath else ''
 
 
 def get_next_filenum():
@@ -217,8 +215,8 @@ def get_next_filenum():
 def remove_file_by_num(_filenum):
     with sqlite3.connect(file_meta_db) as dbcon:
         cursor = dbcon.cursor()
-        cursor.execute("""DELETE * FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
-        cursor.execute("""DELETE * FROM Filenums WHERE filenum = (?)""", (_filenum,))
+        cursor.execute("""DELETE FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
+        cursor.execute("""DELETE FROM Filenums WHERE filenum = (?)""", (_filenum,))
         return cursor.fetchone()
 
 
