@@ -8,21 +8,6 @@ file_meta_db = ROOT + 'file_metadata.db'
 user_meta_db = ROOT + 'user_metadata.db'
 
 
-def main():
-    # create_user_metadata()
-    # create_tag_file()
-    # add_user("Rawn", "a3nme", "123456")
-    # add_user("Uzi", "1245", "anjkf")
-    # print(fetch_tag("uzi's file"))
-    # print(fetch_tag("few"))
-    # print(fetch_user("banana"))
-    # print(has_user("Uzi"))
-    # print(has_user("banana"))
-    # add_user_metadata("v", '', '', {'p': '5'}, '', '')
-    print(fetch_user_metadata("VVVV")[1])
-    # print(has_user("Amit"))
-
-
 # Check if userfile exists, if not then create it.
 def create_user_file():
     db_existed = os.path.isfile(users_db)
@@ -66,7 +51,14 @@ class FileMetaHandler(object):
     def update_file_meta(self, _filenum, _tag, _size):
         with sqlite3.connect(self.meta_db_path) as dbcon:
             cursor = dbcon.cursor()
-            cursor.execute("""UPDATE FileMetadata SET tag = (?), size = (?) WHERE filenum = (?)""", (_tag, _size, _filenum))
+            cursor.execute("""UPDATE FileMetadata SET tag = (?), size = (?)
+                              WHERE filenum = (?)""", (_tag, _size, _filenum))
+
+    def update_filenum_in_meta(self, _old_filenum, _new_filenum):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""UPDATE FileMetadata SET filenum = (?)
+                              WHERE filenum = (?)""", (_new_filenum, _old_filenum))
 
     def fetch_tag(self, _filenum):
         with sqlite3.connect(self.meta_db_path) as dbcon:
@@ -126,6 +118,18 @@ class FileMetaHandler(object):
                 ftppath = ftppath[0].split('/')[-1]
             return ftppath
 
+    def fetch_all_files(self):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""SELECT ftppath, numpath FROM Filenums""")
+            return cursor.fetchall()
+
+    def remove_filenum(self, _filenum):
+        with sqlite3.connect(self.meta_db_path) as dbcon:
+            cursor = dbcon.cursor()
+            cursor.execute("""DELETE FROM Filenums WHERE filenum = (?)""", (_filenum,))
+            return cursor.fetchone()
+
     def get_next_filenum(self):
         with sqlite3.connect(self.meta_db_path) as dbcon:
             cursor = dbcon.cursor()
@@ -136,8 +140,8 @@ class FileMetaHandler(object):
     def remove_file_by_num(self, _filenum):
         with sqlite3.connect(self.meta_db_path) as dbcon:
             cursor = dbcon.cursor()
-            cursor.execute("""DELETE * FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
-            cursor.execute("""DELETE * FROM Filenums WHERE filenum = (?)""", (_filenum,))
+            cursor.execute("""DELETE FROM FileMetadata WHERE filenum = (?)""", (_filenum,))
+            cursor.execute("""DELETE FROM Filenums WHERE filenum = (?)""", (_filenum,))
             return cursor.fetchone()
 
     """
@@ -148,7 +152,6 @@ class FileMetaHandler(object):
         if not numpath:
             new_num = self.get_next_filenum()
             parent_ftppath = '/'.join(path.split('/')[:-1]) or '/'
-            print(parent_ftppath)
             parent_numpath = self.fetch_numpath_by_ftppath(parent_ftppath)[0]
             numpath = os.sep.join((parent_numpath, str(new_num)))
             self.add_numpath(new_num, numpath, path)
@@ -233,8 +236,3 @@ def has_user(_name):
     if fetch_user(_name):
         return 1
     return 0
-
-
-if __name__ == '__main__':
-    main()
-

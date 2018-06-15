@@ -1,5 +1,4 @@
 import os
-import sys
 import logging
 import db
 from mycrypto import MyCipher
@@ -8,6 +7,7 @@ from pyftpdlib.authorizers import DummyAuthorizer
 from pyftpdlib.handlers import FTPHandler, proto_cmds
 from pyftpdlib.servers import FTPServer
 from pyftpdlib.filesystems import AbstractedFS
+from cryptography.exceptions import InvalidKey
 
 
 class MySmartyAuthorizer(DummyAuthorizer):
@@ -39,9 +39,12 @@ class MySmartyAuthorizer(DummyAuthorizer):
     def validate_authentication(self, username, password, handler):
         msg = "Authentication failed."
         if not self.has_user(username):
-            raise Exception(msg)
-        udata = db.fetch_user(username)
-        MyCipher.verify_stored_password(password, udata[0], udata[1])
+            raise pyftpdlib.authorizers.AuthenticationFailed(msg)
+        try:
+            udata = db.fetch_user(username)
+            MyCipher.verify_stored_password(password, udata[0], udata[1])
+        except InvalidKey:
+            raise pyftpdlib.authorizers.AuthenticationFailed(msg)
 
     def get_home_dir(self, username):
         return db.fetch_user_metadata(username)[0]
@@ -98,20 +101,20 @@ class MyDBFS(AbstractedFS):
     def fs2ftp(self, fspath):
         return self.cmd_channel.file_meta_handler.fetch_filepath(fspath)[0]
 
-    def mkhomedir(self, dirnum):
-        # home_filenum = db.get_next_filenum()
-        # home_numpath = os.path.realpath(str(home_filenum))
-        # db.add_numpath(dirnum, home_numpath, '/')
-        self.mkdir(dirnum)
-        return
-
     def listdir(self, path):
         """
         Gets ftp-filenames (not full paths) for each file.
         NLST works. LIST doesn't work!
         """
-        return [self.cmd_channel.file_meta_handler.fetch_filename(filenum) for filenum in super().listdir(path)
-                if not filenum.endswith('.db')]
+        return [self.cmd_channel.file_meta_handler.fetch_filename(filenum) or filenum
+                for filenum in super().listdir(path) if not filenum.endswith('.db')]
+
+    def rename(self, src, dst):
+        super().rename(src, dst)
+        src_num = int(src.split(os.sep)[-1])
+        dst_num = int(dst.split(os.sep)[-1])
+        self.cmd_channel.file_meta_handler.remove_filenum(src_num)
+        self.cmd_channel.file_meta_handler.update_filenum_in_meta(src_num, dst_num)
 
 
 class MyFTPHandler(FTPHandler):
@@ -147,12 +150,6 @@ class MyFTPHandler(FTPHandler):
     def ftp_PASS(self, line):
         if not self._registering:
             super().ftp_PASS(line)
-            filesizes = self.file_meta_handler.fetch_all_file_sizes()
-            altered_files = [ftppath for numpath, ftppath, size in filesizes if size != self.fs.getsize(numpath)]
-            if altered_files:
-                self.respond('556 The following files\' sizes have been altered: %s' % ', '.join(altered_files))
-            else:
-                self.respond('230 All file unchanged')
             return
 
         username = self.username
@@ -225,6 +222,22 @@ class MyFTPHandler(FTPHandler):
     def handle_auth_success(self, home, password, msg_login):
         self.file_meta_handler = db.FileMetaHandler(home)
         super().handle_auth_success(home, password, msg_login)
+        if self._registering:
+            return
+        msg = '556 '
+        missing_files = [ftppath for ftppath, numpath in self.file_meta_handler.fetch_all_files()
+                              if not self.fs.lexists(numpath)]
+        altered_size_files = [ftppath for numpath, ftppath, size in self.file_meta_handler.fetch_all_file_sizes()
+                              if self.fs.lexists(numpath) and size != self.fs.getsize(numpath)]
+        if missing_files:
+            msg += 'The following files have been removed or renamed: %s ' % ', '.join(missing_files)
+        if altered_size_files:
+            msg += 'The following files\' sizes have been altered: %s' % ', '.join(altered_size_files)
+
+        if altered_size_files or missing_files:
+            self.respond(msg)
+        else:
+            self.respond('230 All files unchanged')
 
 
 def main():

@@ -59,10 +59,7 @@ class MyCipher(object):
         ct = iv_and_ct[16:]
         h = hmac.HMAC(self._mac_key, hashes.SHA256(), default_backend())
         h.update(iv_and_ct)
-        try:
-            h.verify(tag)
-        except InvalidSignature:
-            return None
+        h.verify(tag)
 
         cipher = Cipher(algorithms.AES(self._cipher_key), modes.CBC(iv), default_backend())
         decryptor = cipher.decryptor()

@@ -1,7 +1,9 @@
 import io
 import sys
+import os
 from ftplib import FTP, error_perm
 from mycrypto import MyCipher
+from cryptography.exceptions import InvalidSignature
 
 
 class MyFTPClient(FTP):
@@ -67,16 +69,10 @@ class MyFTPClient(FTP):
         with io.BytesIO() as buf:
             try:
                 ret = super().retrbinary(' '.join((retrcmd, enc_path)), buf.write, blocksize, rest)
-            except error_perm as e:
-                if str(e).startswith('555'):
-                    print(e, file=sys.stderr)
-                    return None
-                else:
-                    raise e
-            buf.flush()
-            dec_bytes = self._cipher.decrypt(buf.getvalue())
-            if dec_bytes is None:
-                print('The file %s has been altered!' % path, file=sys.stderr)
+                buf.flush()
+                dec_bytes = self._cipher.decrypt(buf.getvalue())
+            except (error_perm, InvalidSignature):
+                print('The file %s has been altered! Download aborted' % path, file=sys.stderr)
                 return None
         with io.BytesIO(dec_bytes) as buf:
             while True:
@@ -122,10 +118,11 @@ class MyFTPClient(FTP):
         return super().cwd(self._encrypt_path(dirname))
 
     def size(self, filename):
+        self.sendcmd('TYPE I')
         return super().size(self._encrypt_path(filename))
 
     def mkd(self, dirname):
-        return super().mkd(self._encrypt_path(dirname))
+        return self._decrypt_path(super().mkd(self._encrypt_path(dirname)))
 
     def rmd(self, dirname):
         return super().rmd(self._encrypt_path(dirname))
@@ -133,129 +130,65 @@ class MyFTPClient(FTP):
     def pwd(self):
         return self._decrypt_path(super().pwd())
 
+    def nlst(self, *args):
+        return ', '.join(super().nlst(*args))
+
+    def upload_file(self, filename):
+        return self.storbinary('STOR ' + filename, open(filename, 'rb'))
+
+    def download_file(self, filename):
+        with open(filename, 'wb') as outfile:
+            ret = self.retrbinary('RETR ' + filename, outfile.write)
+        if not ret:
+            os.remove(filename)
+
+    def client_op(self, *args):
+        method = getattr(MyFTPClient, args[0])
+        args = [input('Please enter a %s\n' % arg) for arg in args[1:]]
+        ret = method(self, *args)
+        if ret:
+            print(ret)
+        return self
+
     def client_logout(self):
         self.__exit__()
         return None
 
-    def client_upload_file(self):
-        filename = input('Please enter a filename\n').strip()
-        self.storbinary('STOR ' + filename, open(filename, 'rb'))
-        return self
-
-    def client_download_file(self):
-        filename = input('Please enter a filename\n').strip()
-        with open(filename, 'wb') as outfile:
-            self.retrbinary('RETR ' + filename, outfile.write)
-        return self
-
-    def client_list_files(self):
-        print(', '.join(self.nlst()))
-        return self
-
-    def client_size(self):
-        filename = input('Please enter a filename\n').strip()
-        print(self.size(filename))
-        return self
-
-    def client_rename(self):
-        fromname = input('Please enter a filename\n').strip()
-        toname = input('Please enter a new name\n').strip()
-        print(self.rename(fromname, toname))
-        return self
-
-    def client_delete_file(self):
-        filename = input('Please enter a filename\n').strip()
-        print(self.delete(filename))
-        return self
-
-    def client_create_folder(self):
-        dirname = input('Please enter a directory name\n').strip()
-        print(self.mkd(dirname))
-        return self
-
-    def client_delete_folder(self):
-        dirname = input('Please enter a directory name\n').strip()
-        print(self.rmd(dirname))
-        return self
-
-    def client_cwd(self):
-        dirname = input('Please enter a directory name\n').strip()
-        print(self.cwd(dirname))
-        return self
-
-    def client_pwd(self):
-        print(self.pwd())
-        return self
+    @staticmethod
+    def client_register(ftp):
+        username = input('Please enter a username\n')
+        password = input('Please enter a password\n')
+        with MyFTPClient('localhost') as ftp:
+            print(ftp.register(username, password))
+        return None
 
     @staticmethod
-    def client_login(*args):
-        username = input('Please enter a username\n').strip()
-        password = input('Please enter a password\n').strip()
+    def client_login(ftp):
+        username = input('Please enter a username\n')
+        password = input('Please enter a password\n')
         ftp = MyFTPClient('localhost', user=username, passwd=password).__enter__()
         return ftp
 
     @staticmethod
-    def client_register(*args):
-        username = input('Please enter a username\n').strip()
-        password = input('Please enter a password\n').strip()
-        with MyFTPClient('localhost') as ftp:
-            ftp.register(username, password)
-        return None
-
-
-def test_files():
-    filename = 'potato.txt' if len(sys.argv) < 2 else sys.argv[1]
-    name, ext = filename.split('.')
-
-    with MyFTPClient('localhost') as ftp:
-        ftp.set_debuglevel(1)
-        ftp.login('Rawn', '1234')
-        ftp.storbinary('STOR ' + filename, open(filename, 'rb'))
-    #     ftp.storbinary('STOR potato.txt', open('potato.txt', 'rb'))
-
-    with MyFTPClient('localhost') as ftp:
-        ftp.set_debuglevel(1)
-        ftp.login('Rawn', '1234')
-        with open('.'.join((name + '_from_server', ext)), 'wb') as outfile:
-            ftp.retrbinary('RETR ' + filename, outfile.write)
-
-
-def test_directories():
-    with MyFTPClient('localhost') as ftp:
-        ftp.set_debuglevel(1)
-        ftp.login('Rawn', '1234')
-        print(', '.join(ftp.nlst()))
-        ftp.mkd('stuff')
-        ftp.cwd('stuff')
-        ftp.mkd('things')
-        ftp.cwd('things')
-        ftp.mkd('abc')
-        ftp.cwd('abc')
-        print(ftp.pwd())
-        ftp.cwd('..')
-        ftp.cwd('..')
-        print(ftp.pwd())
-        ftp.cwd('..')
-        print(', '.join(ftp.nlst()))
-        print(ftp.pwd())
-
-
-def register_users():
-    with MyFTPClient('localhost') as ftp:
-        ftp.set_debuglevel(1)
-        ftp.register('Rawn', '1234')
-        ftp.register('Uzi', '5678')
-        ftp.register('Amit', 'blabla')
+    def client_quit(ftp):
+        sys.exit()
 
 
 logged_out_menu = [
     {
         'name': 'Register',
-        'fun': getattr(MyFTPClient, 'client_register')
+        'fun': MyFTPClient.client_register,
+        'args': []
     },
     {
         'name': 'Log in',
-        'fun': getattr(MyFTPClient, 'client_login')
+        'fun': MyFTPClient.client_login,
+        'args': []
+    },
+    {
+        'name': 'Quit',
+        'fun': MyFTPClient.client_quit,
+        'args': []
     }
 ]
 
@@ -263,47 +196,58 @@ logged_out_menu = [
 logged_in_menu = [
     {
         'name': 'List files',
-        'fun': getattr(MyFTPClient, 'client_list_files')
+        'fun': MyFTPClient.client_op,
+        'args': ['nlst']
     },
     {
         'name': 'Upload file',
-        'fun': getattr(MyFTPClient, 'client_upload_file')
+        'fun': MyFTPClient.client_op,
+        'args': ['upload_file', 'filename']
     },
     {
         'name': 'Download file',
-        'fun': getattr(MyFTPClient, 'client_download_file')
+        'fun': MyFTPClient.client_op,
+        'args': ['download_file', 'filename']
     },
     {
         'name': 'Rename file or folder',
-        'fun': getattr(MyFTPClient, 'client_rename')
+        'fun': MyFTPClient.client_op,
+        'args': ['rename', 'filename', 'new name']
     },
     {
         'name': 'Get file size',
-        'fun': getattr(MyFTPClient, 'client_size')
+        'fun': MyFTPClient.client_op,
+        'args': ['size', 'filename']
     },
     {
         'name': 'Delete file',
-        'fun': getattr(MyFTPClient, 'client_delete_file')
+        'fun': MyFTPClient.client_op,
+        'args': ['delete', 'filename']
     },
     {
         'name': 'Create folder',
-        'fun': getattr(MyFTPClient, 'client_create_folder')
+        'fun': MyFTPClient.client_op,
+        'args': ['mkd', 'dirname']
     },
     {
         'name': 'Delete folder',
-        'fun': getattr(MyFTPClient, 'client_delete_folder')
+        'fun': MyFTPClient.client_op,
+        'args': ['rmd', 'dirname']
     },
     {
         'name': 'Change working directory',
-        'fun': getattr(MyFTPClient, 'client_cwd')
+        'fun': MyFTPClient.client_op,
+        'args': ['cwd', 'dirname']
     },
     {
         'name': 'Show current working directory',
-        'fun': getattr(MyFTPClient, 'client_pwd')
+        'fun': MyFTPClient.client_op,
+        'args': ['pwd']
     },
     {
         'name': 'Log out',
-        'fun': getattr(MyFTPClient, 'client_logout')
+        'fun': MyFTPClient.client_logout,
+        'args': []
     }
 ]
 
@@ -315,15 +259,20 @@ def display_menu(menu):
 
 
 def main():
-    # register_users()
-    # test_files()
-    # test_directories()
     ftp = None
     while True:
         menu = logged_in_menu if ftp else logged_out_menu
         display_menu(menu)
         choice = int(input().strip())
-        ftp = menu[choice - 1]['fun'](ftp)
+        menu_item = menu[choice - 1]
+        try:
+            ftp = menu_item['fun'](ftp, *menu_item['args'])
+        except error_perm as e:
+            print(e, file=sys.stderr)
+        except (EOFError, OSError):
+            print('Server error', file=sys.stderr)
+            ftp = None
+        print()
 
 
 if __name__ == '__main__':
