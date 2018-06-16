@@ -4,20 +4,6 @@ import json
 
 ROOT = os.getcwd() + os.sep
 users_db = ROOT + 'users.db'
-file_meta_db = ROOT + 'file_metadata.db'
-user_meta_db = ROOT + 'user_metadata.db'
-
-
-# Check if userfile exists, if not then create it.
-def create_user_file():
-    db_existed = os.path.isfile(users_db)
-    with sqlite3.connect(users_db) as dbcon:
-        cursor = dbcon.cursor()
-        if not db_existed:
-            cursor.execute("""CREATE TABLE Users (
-                            username TEXT PRIMARY KEY NOT NULL,
-                            salt TEXT NOT NULL,
-                            hashed_pass BLOB NOT NULL)""")
 
 
 class FileMetaHandler(object):
@@ -161,64 +147,52 @@ class FileMetaHandler(object):
 
 
 def create_user_metadata():
-    metadata_existed = os.path.isfile(user_meta_db)
-    with sqlite3.connect(user_meta_db) as dbcon:
+    metadata_existed = os.path.isfile(users_db)
+    with sqlite3.connect(users_db) as dbcon:
         cursor = dbcon.cursor()
         if not metadata_existed:
-            cursor.execute("""CREATE TABLE Metadata (
+            cursor.execute("""CREATE TABLE Users (
                             username TEXT PRIMARY KEY NOT NULL,
                             homedir TEXT NOT NULL,
                             perm TEXT NOT NULL,
                             operms NOT NULL,
                             msg_login TEXT NOT NULL,
-                            msg_quit TEXT NOT NULL)""")
+                            msg_quit TEXT NOT NULL,
+                            salt TEXT NOT NULL,
+                            hashed_pass BLOB NOT NULL)""")
 
 
-def add_user_metadata(username, homedir, perm, operms, msg_login, msg_quit):
-    with sqlite3.connect(user_meta_db) as dbcon:
+def add_user_metadata(username, homedir, perm, operms, msg_login, msg_quit, salt, hashed_pass):
+    with sqlite3.connect(users_db) as dbcon:
         cursor = dbcon.cursor()
-        cursor.execute("""INSERT INTO Metadata VALUES (?, ?, ?, ?, ?, ?)""",
-                       (username, homedir, perm, json.dumps(operms), msg_login, msg_quit))
+        cursor.execute("""INSERT INTO Users VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (username, homedir, perm, json.dumps(operms), msg_login, msg_quit, salt, hashed_pass))
         return cursor.lastrowid
 
 
 def remove_user_metadata(username):
-    with sqlite3.connect(user_meta_db) as dbcon:
+    with sqlite3.connect(users_db) as dbcon:
         cursor = dbcon.cursor()
-        cursor.execute("""DELETE FROM Metadata WHERE username = (?)""", (username,))
+        cursor.execute("""DELETE FROM Users WHERE username = (?)""", (username,))
         return cursor.lastrowid
 
 
 def fetch_user_metadata(username):
-    with sqlite3.connect(user_meta_db) as dbcon:
+    with sqlite3.connect(users_db) as dbcon:
         cursor = dbcon.cursor()
-        cursor.execute("""SELECT homedir, perm, msg_login, msg_quit FROM Metadata WHERE username = (?)""", (username,))
+        cursor.execute("""SELECT homedir, perm, msg_login, msg_quit FROM Users WHERE username = (?)""", (username,))
         return cursor.fetchone()
 
 
 def fetch_operms(username):
-    with sqlite3.connect(user_meta_db) as dbcon:
+    with sqlite3.connect(users_db) as dbcon:
         cursor = dbcon.cursor()
-        cursor.execute("""SELECT operms FROM Metadata WHERE username = (?)""", (username,))
+        cursor.execute("""SELECT operms FROM Users WHERE username = (?)""", (username,))
         return json.loads(cursor.fetchone()[0])
 
 
-# Adds a user to the userfile. Expects to receive a salted password post hashing.
-def add_user(_name, _salt, _pass):
-    with sqlite3.connect(users_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""INSERT INTO Users VALUES (?,?,?)""", (_name, _salt, _pass))
-        return cursor.lastrowid
-
-
-def remove_user(_name):
-    with sqlite3.connect(users_db) as dbcon:
-        cursor = dbcon.cursor()
-        cursor.execute("""DELETE FROM Users WHERE username = (?)""", (_name,))
-
-
 # Returns a tuple contains the salt and hashed password of a given username
-def fetch_user(_name):
+def fetch_user_pass(_name):
     with sqlite3.connect(users_db) as dbcon:
         cursor = dbcon.cursor()
         cursor.execute("""SELECT salt, hashed_pass FROM Users WHERE username = (?)""", (_name,))
@@ -233,6 +207,6 @@ def fetch_next_user_num():
 
 
 def has_user(_name):
-    if fetch_user(_name):
+    if fetch_user_pass(_name):
         return 1
     return 0

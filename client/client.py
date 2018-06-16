@@ -1,7 +1,7 @@
 import io
 import sys
 import os
-from ftplib import FTP, error_perm
+from ftplib import FTP, error_perm, error_reply
 from mycrypto import MyCipher
 from cryptography.exceptions import InvalidSignature
 
@@ -18,35 +18,36 @@ class MyFTPClient(FTP):
 
     def _decrypt_filename(self, filename):
         try:
-            ret = self._cipher.decrypt(bytes.fromhex(filename)).decode()
-            if ret is None:
-                print('The filename has been altered!', file=sys.stderr)
-            return ret
-        except ValueError:
+            return self._cipher.decrypt(bytes.fromhex(filename)).decode()
+        except InvalidSignature:
+            print('The filename has been altered!', file=sys.stderr)
             return filename
 
     @staticmethod
-    def _is_normal_filename(filename):
-        return not (not filename or filename in ('.', '..'))
+    def _is_encrypted_filename(filename):
+        return not (not filename or filename in ('.', '..') or len(filename) < 160)
 
     def _encrypt_path(self, path):
-        return '/'.join([self._encrypt_filename(dirname) if self._is_normal_filename(dirname) else dirname
+        return '/'.join([self._encrypt_filename(dirname) if self._is_encrypted_filename(dirname) else dirname
                          for dirname in path.split('/')])
 
     def _decrypt_path(self, path):
-        return '/'.join([self._decrypt_filename(dirname) if self._is_normal_filename(dirname) else dirname
+        return '/'.join([self._decrypt_filename(dirname) if self._is_encrypted_filename(dirname) else dirname
                          for dirname in path.split('/')])
+
+    def decrypt_server_message(self, line):
+        return ' '.join([self._decrypt_path(word) if len(word) >= 160 else word for word in line.split(' ')])
 
     def login(self, user='', passwd='', acct=''):
         self._cipher = MyCipher(passwd)
         user = self._encrypt_filename(user)
         server_key = self._cipher.derive_server_key()
-        super().login(user, server_key, acct)
+        resp = super().login(user, server_key, acct)
         try:
             self.getresp()
         except error_perm as e:
-            print(' '.join([self._decrypt_path(word) if len(word) == 160 or (len(word) == 161 and word[0] == '/')
-                            else word for word in str(e).split(' ')[4:]]), file=sys.stderr)
+            print('SECURITY ALERT -- ' + self.decrypt_server_message(str(e)[4:]), file=sys.stderr)
+        return resp
 
     def register(self, user, passwd, acct=''):
         self._cipher = MyCipher(passwd)
@@ -58,7 +59,6 @@ class MyFTPClient(FTP):
         if resp[0] == '3':
             resp = self.sendcmd('ACCT ' + acct)
         if resp[0] != '2':
-            from ftplib import error_reply
             raise error_reply(resp)
         return resp
 
@@ -68,11 +68,11 @@ class MyFTPClient(FTP):
         enc_path = self._encrypt_path(path)
         with io.BytesIO() as buf:
             try:
-                ret = super().retrbinary(' '.join((retrcmd, enc_path)), buf.write, blocksize, rest)
+                resp = super().retrbinary(' '.join((retrcmd, enc_path)), buf.write, blocksize, rest)
                 buf.flush()
                 dec_bytes = self._cipher.decrypt(buf.getvalue())
             except (error_perm, InvalidSignature):
-                print('The file %s has been altered! Download aborted' % path, file=sys.stderr)
+                print('SECURITY ALERT -- The file %s has been altered! Download aborted' % path, file=sys.stderr)
                 return None
         with io.BytesIO(dec_bytes) as buf:
             while True:
@@ -80,7 +80,7 @@ class MyFTPClient(FTP):
                 if not b:
                     break
                 callback(b)
-        return ret
+        return resp
 
     def storbinary(self, cmd, fp, blocksize=8192, callback=None, rest=None):
         """Encrypt filename, encrypt file contents into memory buffer, then call the super-method with them"""
@@ -102,11 +102,7 @@ class MyFTPClient(FTP):
         if callback is None:
             callback = print
 
-        def decrypt_line(line):
-            line_parts = line.rsplit(' ', maxsplit=1)
-            dec_filename = self._decrypt_filename(line_parts[-1])
-            return ' '.join(line_parts[:-1] + [dec_filename])
-        return super().retrlines(cmd, lambda line: callback(decrypt_line(line)))
+        return super().retrlines(cmd, lambda line: callback(self._decrypt_path(line)))
 
     def rename(self, fromname, toname):
         return super().rename(self._encrypt_path(fromname), self._encrypt_path(toname))
@@ -122,13 +118,10 @@ class MyFTPClient(FTP):
         return super().size(self._encrypt_path(filename))
 
     def mkd(self, dirname):
-        return self._decrypt_path(super().mkd(self._encrypt_path(dirname)))
+        return super().mkd(self._encrypt_path(dirname))
 
     def rmd(self, dirname):
         return super().rmd(self._encrypt_path(dirname))
-
-    def pwd(self):
-        return self._decrypt_path(super().pwd())
 
     def nlst(self, *args):
         return ', '.join(super().nlst(*args))
@@ -137,21 +130,23 @@ class MyFTPClient(FTP):
         return self.storbinary('STOR ' + filename, open(filename, 'rb'))
 
     def download_file(self, filename):
-        with open(filename, 'wb') as outfile:
-            ret = self.retrbinary('RETR ' + filename, outfile.write)
-        if not ret:
-            os.remove(filename)
+        with open(filename.split('/')[-1], 'wb') as outfile:
+            resp = self.retrbinary('RETR ' + filename, outfile.write)
+        if not resp:
+            os.remove(filename.split('/')[-1])
+        return resp
 
     def client_op(self, *args):
         method = getattr(MyFTPClient, args[0])
         args = [input('Please enter a %s\n' % arg) for arg in args[1:]]
-        ret = method(self, *args)
-        if ret:
-            print(ret)
+        resp = method(self, *args)
+        if resp:
+            print(self.decrypt_server_message(resp))
         return self
 
     def client_logout(self):
-        self.__exit__()
+        resp = self.quit()
+        print(self.decrypt_server_message(resp))
         return None
 
     @staticmethod
@@ -159,14 +154,18 @@ class MyFTPClient(FTP):
         username = input('Please enter a username\n')
         password = input('Please enter a password\n')
         with MyFTPClient('localhost') as ftp:
-            print(ftp.register(username, password))
+            resp = ftp.register(username, password)
+            print(ftp.decrypt_server_message(resp))
         return None
 
     @staticmethod
     def client_login(ftp):
         username = input('Please enter a username\n')
         password = input('Please enter a password\n')
-        ftp = MyFTPClient('localhost', user=username, passwd=password).__enter__()
+        ftp = MyFTPClient('localhost')
+        resp = ftp.login(username, password)
+        if resp:
+            print(ftp.decrypt_server_message(resp))
         return ftp
 
     @staticmethod
@@ -263,14 +262,16 @@ def main():
     while True:
         menu = logged_in_menu if ftp else logged_out_menu
         display_menu(menu)
-        choice = int(input().strip())
-        menu_item = menu[choice - 1]
         try:
+            choice = int(input().strip())
+            menu_item = menu[choice - 1]
             ftp = menu_item['fun'](ftp, *menu_item['args'])
+        except (ValueError, IndexError):
+            print('Invalid input', file=sys.stderr)
         except error_perm as e:
             print(e, file=sys.stderr)
-        except (EOFError, OSError):
-            print('Server error', file=sys.stderr)
+        except (EOFError, OSError) as e:
+            print('Server error: %s' % e, file=sys.stderr)
             ftp = None
         print()
 

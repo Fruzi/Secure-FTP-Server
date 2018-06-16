@@ -1,5 +1,4 @@
 import os
-import logging
 import db
 from mycrypto import MyCipher
 import pyftpdlib.filesystems
@@ -13,8 +12,6 @@ from cryptography.exceptions import InvalidKey
 class MySmartyAuthorizer(DummyAuthorizer):
 
     def __init__(self):
-        db.create_user_file()
-        # db.create_file_metadata()
         db.create_user_metadata()
 
     def add_user(self, username, password, homedir, perm='elr',
@@ -28,12 +25,10 @@ class MySmartyAuthorizer(DummyAuthorizer):
         homedir = os.path.realpath(homedir)
         self._check_permissions(username, perm)
         salt, key = MyCipher.derive_password_for_storage(password)
-        db.add_user(username, salt, key)
-        db.add_user_metadata(username, homedir, perm, '', msg_login, msg_quit)
+        db.add_user_metadata(username, homedir, perm, '', msg_login, msg_quit, salt, key)
 
     def remove_user(self, username):
         super().remove_user(username)
-        db.remove_user(username)
         db.remove_user_metadata(username)
 
     def validate_authentication(self, username, password, handler):
@@ -41,8 +36,8 @@ class MySmartyAuthorizer(DummyAuthorizer):
         if not self.has_user(username):
             raise pyftpdlib.authorizers.AuthenticationFailed(msg)
         try:
-            udata = db.fetch_user(username)
-            MyCipher.verify_stored_password(password, udata[0], udata[1])
+            salt, hashed_pass = db.fetch_user_pass(username)
+            MyCipher.verify_stored_password(password, salt, hashed_pass)
         except InvalidKey:
             raise pyftpdlib.authorizers.AuthenticationFailed(msg)
 
@@ -156,7 +151,7 @@ class MyFTPHandler(FTPHandler):
         self.flush_account()
         self.username = username
         homedir = db.fetch_next_user_num()
-        self.handle_auth_success(str(homedir), line, "New USER '%s' registered." % username)
+        self.handle_auth_success(str(homedir), line, "New USER %s registered." % username)
         self.fs.mkdir(str(homedir))
         self.file_meta_handler.create_file_metadata()
         self.authorizer.add_user(username, line, str(homedir), perm='elradfmwMT')
@@ -195,9 +190,12 @@ class MyFTPHandler(FTPHandler):
         return super().ftp_RETR(temp_filename)
 
     def ftp_DELE(self, path):
-        if super().ftp_DELE(path) is not None:
-            filenum = path.split(os.sep)[-1]
-            self.file_meta_handler.remove_file_by_num(filenum)
+        super().ftp_DELE(path)
+        self.on_file_deleted(path)
+
+    def ftp_RMD(self, path):
+        super().ftp_RMD(path)
+        self.on_file_deleted(path)
 
     def on_file_received(self, file):
         self._received_file = file
@@ -211,6 +209,10 @@ class MyFTPHandler(FTPHandler):
 
     def on_incomplete_file_sent(self, file):
         self.on_file_sent(file)
+
+    def on_file_deleted(self, path):
+        filenum = path.split(os.sep)[-1]
+        self.file_meta_handler.remove_file_by_num(filenum)
 
     def pre_process_command(self, line, cmd, arg):
         if cmd == 'TAG':
@@ -230,7 +232,7 @@ class MyFTPHandler(FTPHandler):
         altered_size_files = [ftppath for numpath, ftppath, size in self.file_meta_handler.fetch_all_file_sizes()
                               if self.fs.lexists(numpath) and size != self.fs.getsize(numpath)]
         if missing_files:
-            msg += 'The following files have been removed or renamed: %s ' % ', '.join(missing_files)
+            msg += 'The following files have been removed or renamed: %s. ' % ', '.join(missing_files)
         if altered_size_files:
             msg += 'The following files\' sizes have been altered: %s' % ', '.join(altered_size_files)
 
@@ -254,8 +256,6 @@ def main():
     # set a limit for connections
     server.max_cons = 256
     server.max_cons_per_ip = 5
-
-    logging.basicConfig(level=logging.DEBUG)
 
     # start ftp server
     server.serve_forever()
