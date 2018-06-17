@@ -102,7 +102,8 @@ class MyDBFS(AbstractedFS):
         NLST works. LIST doesn't work!
         """
         return [self.cmd_channel.file_meta_handler.fetch_filename(filenum) or filenum
-                for filenum in super().listdir(path) if not filenum.endswith('.db')]
+                for filenum in super().listdir(path)
+                if not (filenum.endswith('.db') or filenum == 'tagtag')]
 
     def rename(self, src, dst):
         super().rename(src, dst)
@@ -124,7 +125,19 @@ class MyFTPHandler(FTPHandler):
                 help='Syntax: RGTR <SP> user-name (set username).'),
             'TAG': dict(
                 perm='w', auth=True, arg=True,
-                help='Syntax: MAC <SP> tag (store a file tag).')
+                help='Syntax: TAG <SP> tag (store a file tag).'),
+            'META': dict(
+                perm='w', auth=True, arg=False,
+                help='Syntax: META (send file metadata db for fs updates).'),
+            'TAGTAG': dict(
+                perm='w', auth=True, arg=True,
+                help='Syntax: TAGTAG <SP> tag (store the file metadata db tag).'),
+            'LGMETA': dict(
+                perm='w', auth=True, arg=False,
+                help='Syntax: LGMETA (send file metadata db for login verification).'),
+            'LGVF': dict(
+                perm='w', auth=True, arg=False,
+                help='Syntax: LGVF (send the file metadata db tag).')
         })
 
         self._registering = False
@@ -142,6 +155,36 @@ class MyFTPHandler(FTPHandler):
         self.username = line
         self._registering = True
 
+    def ftp_TAG(self, line):
+        """Receive an authorization tag for a file that was now uploaded."""
+        if not self._received_file:
+            self.respond("503 Bad sequence of commands: use STOR first.")
+            return
+        filesize = self.fs.getsize(self._received_file)
+        filenum = self._received_file.split(os.sep)[-1]
+        if not self.file_meta_handler.fetch_tag(filenum):
+            self.file_meta_handler.add_file_meta(filenum, line, filesize)
+        else:
+            self.file_meta_handler.update_file_meta(filenum, line, filesize)
+        self._received_file = None
+        self.respond("250 File transfer completed.")
+
+    def ftp_META(self, line):
+        super().ftp_RETR(self.file_meta_handler.meta_db_path)
+        self.respond('351 Waiting for meta tag.')
+
+    def ftp_TAGTAG(self, line):
+        with open(self.file_meta_handler.root + os.sep + 'tagtag', 'wb') as fo:
+            fo.write(bytes.fromhex(line))
+
+    def ftp_LGMETA(self, line):
+        super().ftp_RETR(self.file_meta_handler.meta_db_path)
+        self.respond('269 Metadata transfer complete.')
+
+    def ftp_LGVF(self, line):
+        with open(self.file_meta_handler.root + os.sep + 'tagtag', 'rb') as fo:
+            self.respond('256 ' + fo.read().hex())
+
     def ftp_PASS(self, line):
         if not self._registering:
             super().ftp_PASS(line)
@@ -156,20 +199,6 @@ class MyFTPHandler(FTPHandler):
         self.file_meta_handler.create_file_metadata()
         self.authorizer.add_user(username, line, str(homedir), perm='elradfmwMT')
         self._registering = False
-
-    def ftp_TAG(self, line):
-        """Receive an authorization tag for a file that was now uploaded."""
-        if not self._received_file:
-            self.respond("503 Bad sequence of commands: use STOR first.")
-            return
-        filesize = self.fs.getsize(self._received_file)
-        filenum = self._received_file.split(os.sep)[-1]
-        if not self.file_meta_handler.fetch_tag(filenum):
-            self.file_meta_handler.add_file_meta(filenum, line, filesize)
-        else:
-            self.file_meta_handler.update_file_meta(filenum, line, filesize)
-        self._received_file = None
-        self.respond("250 File transfer completed.")
 
     def ftp_RETR(self, file):
         """
@@ -215,7 +244,7 @@ class MyFTPHandler(FTPHandler):
         self.file_meta_handler.remove_file_by_num(filenum)
 
     def pre_process_command(self, line, cmd, arg):
-        if cmd == 'TAG':
+        if cmd in ('TAG', 'META', 'TAGTAG', 'LGMETA', 'LGVF'):
             self.logline("<- %s" % line)
             self.process_command(cmd, arg)
             return
@@ -228,7 +257,7 @@ class MyFTPHandler(FTPHandler):
             return
         msg = '556 '
         missing_files = [ftppath for ftppath, numpath in self.file_meta_handler.fetch_all_files()
-                              if not self.fs.lexists(numpath)]
+                         if not self.fs.lexists(numpath)]
         altered_size_files = [ftppath for numpath, ftppath, size in self.file_meta_handler.fetch_all_file_sizes()
                               if self.fs.lexists(numpath) and size != self.fs.getsize(numpath)]
         if missing_files:

@@ -2,15 +2,15 @@ import sqlite3
 import os
 import json
 
-ROOT = os.getcwd() + os.sep
-users_db = ROOT + 'users.db'
+users_db = os.path.realpath('users.db')
 
 
 class FileMetaHandler(object):
 
     def __init__(self, homedir):
         self.homedir = str(homedir)
-        self.meta_db_path = os.path.realpath(self.homedir) + os.sep + 'file_metadata.db'
+        self.root = os.path.realpath(self.homedir)
+        self.meta_db_path = self.root + os.sep + 'file_metadata.db'
 
     def create_file_metadata(self):
         file_meta_existed = os.path.isfile(self.meta_db_path)
@@ -26,7 +26,8 @@ class FileMetaHandler(object):
                                 size INTEGER NOT NULL,
                                 filenum INTEGER NOT NULL,
                                 FOREIGN KEY (filenum) REFERENCES Filenums(filenum))""")
-                cursor.execute("""INSERT INTO Filenums VALUES (?, ?, ?)""", (self.homedir, ROOT+self.homedir, '/'))
+                cursor.execute("""INSERT INTO Filenums VALUES (?, ?, ?)""", (int(self.homedir), self.root, '/'))
+        open(self.root + os.sep + 'tagtag', 'wb')
 
     def add_file_meta(self, _filenum, _tag, _size):
         with sqlite3.connect(self.meta_db_path) as dbcon:

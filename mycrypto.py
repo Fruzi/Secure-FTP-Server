@@ -18,6 +18,16 @@ class MyCipher(object):
     def derive_server_key(self):
         return MyCipher.derive_key(self._secret + b'3').hex()
 
+    def get_hmac_tag(self, data):
+        h = hmac.HMAC(self._mac_key, hashes.SHA256(), default_backend())
+        h.update(data)
+        return h.finalize()
+
+    def authenticate_hmac(self, data, tag):
+        h = hmac.HMAC(self._mac_key, hashes.SHA256(), default_backend())
+        h.update(data)
+        h.verify(tag)
+
     def encrypt(self, pt, is_filename=False):
         """
         Encrypt and authenticate the given plaintext using AES and HMAC.
@@ -39,9 +49,7 @@ class MyCipher(object):
         encryptor = cipher.encryptor()
         ct = encryptor.update(padded_pt) + encryptor.finalize()
 
-        h = hmac.HMAC(self._mac_key, hashes.SHA256(), default_backend())
-        h.update(iv + ct)
-        tag = h.finalize()
+        tag = self.get_hmac_tag(iv + ct)
         return iv + ct + tag if is_filename else (iv + ct, tag)
 
     def decrypt(self, msg):
@@ -57,9 +65,8 @@ class MyCipher(object):
             tag = msg[-32:]
         iv = iv_and_ct[:16]
         ct = iv_and_ct[16:]
-        h = hmac.HMAC(self._mac_key, hashes.SHA256(), default_backend())
-        h.update(iv_and_ct)
-        h.verify(tag)
+
+        self.authenticate_hmac(iv_and_ct, tag)
 
         cipher = Cipher(algorithms.AES(self._cipher_key), modes.CBC(iv), default_backend())
         decryptor = cipher.decryptor()

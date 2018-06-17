@@ -24,16 +24,16 @@ class MyFTPClient(FTP):
             return filename
 
     @staticmethod
-    def _is_encrypted_filename(filename):
-        return not (not filename or filename in ('.', '..') or len(filename) < 160)
+    def _is_regular_filename(filename):
+        return not (not filename or filename in ('.', '..'))
 
     def _encrypt_path(self, path):
-        return '/'.join([self._encrypt_filename(dirname) if self._is_encrypted_filename(dirname) else dirname
+        return '/'.join([self._encrypt_filename(dirname) if self._is_regular_filename(dirname) else dirname
                          for dirname in path.split('/')])
 
     def _decrypt_path(self, path):
-        return '/'.join([self._decrypt_filename(dirname) if self._is_encrypted_filename(dirname) else dirname
-                         for dirname in path.split('/')])
+        return '/'.join([self._decrypt_filename(dirname) if self._is_regular_filename(dirname) and len(dirname) >= 160
+                         else dirname for dirname in path.split('/')])
 
     def decrypt_server_message(self, line):
         return ' '.join([self._decrypt_path(word) if len(word) >= 160 else word for word in line.split(' ')])
@@ -44,9 +44,11 @@ class MyFTPClient(FTP):
         server_key = self._cipher.derive_server_key()
         resp = super().login(user, server_key, acct)
         try:
-            self.getresp()
+            resp = self.getresp()
         except error_perm as e:
             print('SECURITY ALERT -- ' + self.decrypt_server_message(str(e)[4:]), file=sys.stderr)
+            return resp
+        self.login_tag_verify()
         return resp
 
     def register(self, user, passwd, acct=''):
@@ -90,10 +92,10 @@ class MyFTPClient(FTP):
         super().storbinary(' '.join((storcmd, enc_path)), io.BytesIO(enc_bytes), blocksize, callback, rest)
 
         # send tag
-        resp = super().getresp()
+        resp = self.getresp()
         if resp[0] == '3':
-            resp = self.voidcmd('TAG ' + tag.hex())
-        return resp
+            self.voidcmd('TAG ' + tag.hex())
+        return self.exchange_meta_tag()
 
     def retrlines(self, cmd, callback=None):
         """Decrypt filenames received from LIST or NLST commands and print them"""
@@ -104,11 +106,36 @@ class MyFTPClient(FTP):
 
         return super().retrlines(cmd, lambda line: callback(self._decrypt_path(line)))
 
+    def exchange_meta_tag(self):
+        with io.BytesIO() as buf:
+            try:
+                return super().retrbinary('META', buf.write, 8192, None)
+            except error_reply as e:
+                if str(e)[0] != '3':
+                    return None
+                buf.flush()
+                tagtag = self._cipher.get_hmac_tag(buf.getvalue())
+                return self.voidcmd('TAGTAG ' + tagtag.hex())
+
+    def login_tag_verify(self):
+        with io.BytesIO() as buf:
+            super().retrbinary('LGMETA', buf.write, 8192, None)
+            self.voidresp()
+            buf.flush()
+            tagtag = bytes.fromhex(self.voidcmd('LGVF')[4:])
+            try:
+                if tagtag:
+                    self._cipher.authenticate_hmac(buf.getvalue(), tagtag)
+            except InvalidSignature:
+                print('SECURITY ALERT -- Filesystem may be compromised', file=sys.stderr)
+
     def rename(self, fromname, toname):
-        return super().rename(self._encrypt_path(fromname), self._encrypt_path(toname))
+        super().rename(self._encrypt_path(fromname), self._encrypt_path(toname))
+        return self.exchange_meta_tag()
 
     def delete(self, filename):
-        return super().delete(self._encrypt_path(filename))
+        super().delete(self._encrypt_path(filename))
+        return self.exchange_meta_tag()
 
     def cwd(self, dirname):
         return super().cwd(self._encrypt_path(dirname))
@@ -118,10 +145,12 @@ class MyFTPClient(FTP):
         return super().size(self._encrypt_path(filename))
 
     def mkd(self, dirname):
-        return super().mkd(self._encrypt_path(dirname))
+        super().mkd(self._encrypt_path(dirname))
+        return self.exchange_meta_tag()
 
     def rmd(self, dirname):
-        return super().rmd(self._encrypt_path(dirname))
+        super().rmd(self._encrypt_path(dirname))
+        return self.exchange_meta_tag()
 
     def nlst(self, *args):
         return ', '.join(super().nlst(*args))
@@ -163,6 +192,7 @@ class MyFTPClient(FTP):
         username = input('Please enter a username\n')
         password = input('Please enter a password\n')
         ftp = MyFTPClient('localhost')
+        ftp.set_debuglevel(1)
         resp = ftp.login(username, password)
         if resp:
             print(ftp.decrypt_server_message(resp))
