@@ -32,6 +32,8 @@ class MyFTPClient(FTP):
                          for dirname in path.split('/')])
 
     def _decrypt_path(self, path):
+        if path.startswith('"'):
+            return '"%s"' % self._decrypt_path(path[1:-1])
         return '/'.join([self._decrypt_filename(dirname) if self._is_regular_filename(dirname) and len(dirname) >= 160
                          else dirname for dirname in path.split('/')])
 
@@ -192,7 +194,6 @@ class MyFTPClient(FTP):
         username = input('Please enter a username\n')
         password = input('Please enter a password\n')
         ftp = MyFTPClient('localhost')
-        ftp.set_debuglevel(1)
         resp = ftp.login(username, password)
         if resp:
             print(ftp.decrypt_server_message(resp))

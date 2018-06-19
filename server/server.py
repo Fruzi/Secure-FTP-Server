@@ -194,7 +194,7 @@ class MyFTPHandler(FTPHandler):
         self.flush_account()
         self.username = username
         homedir = db.fetch_next_user_num()
-        self.handle_auth_success(str(homedir), line, "New USER %s registered." % username)
+        self.handle_auth_success(str(homedir), line, 'New USER "%s" registered.' % username)
         self.fs.mkdir(str(homedir))
         self.file_meta_handler.create_file_metadata()
         self.authorizer.add_user(username, line, str(homedir), perm='elradfmwMT')
