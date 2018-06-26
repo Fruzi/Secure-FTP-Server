@@ -10,12 +10,21 @@ from cryptography.exceptions import InvalidKey
 
 
 class MySmartyAuthorizer(DummyAuthorizer):
+    """
+    The custom authorizer used by the server to handle users.
+    It extends DummyAuthorizer which simply stores user data as-is in an object field,
+    and instead works with MyCipher's password derivation method and local database management
+    for persistent (encrypted) storage.
+    """
 
     def __init__(self):
         db.create_user_metadata()
 
     def add_user(self, username, password, homedir, perm='elr',
                  msg_login="Login successful.", msg_quit="Goodbye."):
+        """
+        Adds encrypted user data into the database.
+        """
         if self.has_user(username):
             raise ValueError('user %r already exists' % username)
         if not isinstance(homedir, pyftpdlib.filesystems.unicode):
@@ -48,12 +57,6 @@ class MySmartyAuthorizer(DummyAuthorizer):
         return db.has_user(username)
 
     def has_perm(self, username, perm, path=None):
-        """Whether the user has permission over path (an absolute
-        pathname of a file or a directory).
-
-        Expected perm argument is one of the following letters:
-        "elradfmwMT".
-        """
         if path is None:
             return perm in self.get_perms(username)
 
@@ -89,7 +92,21 @@ class MySmartyAuthorizer(DummyAuthorizer):
 
 
 class MyDBFS(AbstractedFS):
+    """
+    The custom filesystem abstraction object used by the server.
+    This class is in charge of translating between ftp paths and physical paths,
+    using a local database which stores ftp-to-physical mappings.
 
+    The problem this is solving is Windows issues with long paths:
+    paths given by a user are long encrypted hex strings, which Windows is unable to deal with.
+    So we map encrypted names to serial numbers.
+    The resulted paths are also referred to as numpaths.
+
+    Example:
+         /abc123def456.../fed654cba321...
+         becomes:
+         [root]/1/2
+    """
     def ftp2fs(self, ftppath):
         return self.cmd_channel.file_meta_handler.get_numpath(self.ftpnorm(ftppath))
 
@@ -103,7 +120,7 @@ class MyDBFS(AbstractedFS):
         """
         return [self.cmd_channel.file_meta_handler.fetch_filename(filenum) or filenum
                 for filenum in super().listdir(path)
-                if not (filenum.endswith('.db') or filenum == 'tagtag')]
+                if not (filenum.endswith('.db') or filenum == 'mtag')]
 
     def rename(self, src, dst):
         super().rename(src, dst)
@@ -114,11 +131,24 @@ class MyDBFS(AbstractedFS):
 
 
 class MyFTPHandler(FTPHandler):
+    """
+    The custom FTP server handler, extending pyftpdlib's FTPHandler.
+    Encryption (and everything around it) required us to extend the FTP protocol,
+    for more flexible exchanges between users and server.
+
+    New protocol commands added:
+        RGTR - registration
+        TAG - receive file MAC tag from the user
+        META - transfer the file metadata to the user for them to send an updated verification tag for it
+        LGMETA - transfer the file metadata to the user to verify integrity on login
+        METATAG - receive the MAC tag of the file metadata from the user
+        LGVF - transfer the MAC tag of the file metadata to the user to verify integrity on login
+    """
 
     def __init__(self, conn, server, ioloop=None):
         super().__init__(conn, server, ioloop)
 
-        # adding the RGTR (register) and TAG commands to the protocol
+        # adding custom FTP commands to the protocol
         proto_cmds.update({
             'RGTR': dict(
                 perm=None, auth=False, arg=True,
@@ -129,12 +159,12 @@ class MyFTPHandler(FTPHandler):
             'META': dict(
                 perm='w', auth=True, arg=False,
                 help='Syntax: META (send file metadata db for fs updates).'),
-            'TAGTAG': dict(
-                perm='w', auth=True, arg=True,
-                help='Syntax: TAGTAG <SP> tag (store the file metadata db tag).'),
             'LGMETA': dict(
                 perm='w', auth=True, arg=False,
                 help='Syntax: LGMETA (send file metadata db for login verification).'),
+            'METATAG': dict(
+                perm='w', auth=True, arg=True,
+                help='Syntax: METATAG <SP> tag (store the file metadata db tag).'),
             'LGVF': dict(
                 perm='w', auth=True, arg=False,
                 help='Syntax: LGVF (send the file metadata db tag).')
@@ -146,7 +176,9 @@ class MyFTPHandler(FTPHandler):
         self.file_meta_handler = False
 
     def ftp_RGTR(self, line):
-        """Register a new user."""
+        """
+        Register a new user.
+        """
         if self.authorizer.has_user(line):
             self.respond("503 Username already exists. Choose a different name.")
             return
@@ -156,7 +188,10 @@ class MyFTPHandler(FTPHandler):
         self._registering = True
 
     def ftp_TAG(self, line):
-        """Receive an authorization tag for a file that was now uploaded."""
+        """
+        Receive an authorization tag for a file that was now uploaded (or updated).
+        This should follow a STOR command.
+        """
         if not self._received_file:
             self.respond("503 Bad sequence of commands: use STOR first.")
             return
@@ -170,22 +205,39 @@ class MyFTPHandler(FTPHandler):
         self.respond("250 File transfer completed.")
 
     def ftp_META(self, line):
+        """
+        Send the file metadata to the user for them to generate and send an updated MAC tag for it.
+        Expect a METATAG call to follow.
+        """
         super().ftp_RETR(self.file_meta_handler.meta_db_path)
         self.respond('351 Waiting for meta tag.')
 
-    def ftp_TAGTAG(self, line):
-        with open(self.file_meta_handler.root + os.sep + 'tagtag', 'wb') as fo:
-            fo.write(bytes.fromhex(line))
-
     def ftp_LGMETA(self, line):
+        """
+        Send the file metadata to the user for them to verify the integrity of their stored files.
+        """
         super().ftp_RETR(self.file_meta_handler.meta_db_path)
         self.respond('269 Metadata transfer complete.')
 
+    def ftp_METATAG(self, line):
+        """
+        Receive an updated MAC tag for the file metadata.
+        """
+        with open(self.file_meta_handler.root + os.sep + 'mtag', 'wb') as fo:
+            fo.write(bytes.fromhex(line))
+
     def ftp_LGVF(self, line):
-        with open(self.file_meta_handler.root + os.sep + 'tagtag', 'rb') as fo:
+        """
+        Send the MAC tag of the file metadata to the user for them to verify the integrity of their stored files.
+        """
+        with open(self.file_meta_handler.root + os.sep + 'mtag', 'rb') as fo:
             self.respond('256 ' + fo.read().hex())
 
     def ftp_PASS(self, line):
+        """
+        On login, continue normally (super-method).
+        On registration, create a root folder for the user and add their data to the local user database.
+        """
         if not self._registering:
             super().ftp_PASS(line)
             return
@@ -202,8 +254,8 @@ class MyFTPHandler(FTPHandler):
 
     def ftp_RETR(self, file):
         """
-        Creates a temporary file with the requested file data and tag from the db appended to it
-        and calls the super-method with it
+        Create a temporary file with the requested file data and tag from the db appended to it
+        and call the super-method with it (file transfer to user).
         """
         filenum = file.split(os.sep)[-1]
         stored_size = self.file_meta_handler.fetch_size(filenum)[0]
@@ -227,11 +279,13 @@ class MyFTPHandler(FTPHandler):
         self.on_file_deleted(path)
 
     def on_file_received(self, file):
+        """
+        After a STOR command was done (a file was uploaded from the user), expect a MAC tag for it.
+        """
         self._received_file = file
         self.respond("350 Ready for authentication tag.")
 
     def on_file_sent(self, file):
-        """Remove temporary file"""
         if self._sending_temp_file:
             os.remove(file)
             self._sending_temp_file = False
@@ -244,13 +298,18 @@ class MyFTPHandler(FTPHandler):
         self.file_meta_handler.remove_file_by_num(filenum)
 
     def pre_process_command(self, line, cmd, arg):
-        if cmd in ('TAG', 'META', 'TAGTAG', 'LGMETA', 'LGVF'):
+        if cmd in ('TAG', 'META', 'LGMETA', 'METATAG', 'LGVF'):
             self.logline("<- %s" % line)
             self.process_command(cmd, arg)
             return
         super().pre_process_command(line, cmd, arg)
 
     def handle_auth_success(self, home, password, msg_login):
+        """
+        On login success, check for missing / renamed files and resized files by comparing
+        the current state of files with their saved state, stored in a local database.
+        A response is sent accordingly (230 if everything is ok, 556 if anomalies were detected)
+        """
         self.file_meta_handler = db.FileMetaHandler(home)
         super().handle_auth_success(home, password, msg_login)
         if self._registering:

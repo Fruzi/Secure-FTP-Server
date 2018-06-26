@@ -1,13 +1,18 @@
 import io
 import sys
 import os
-from ftplib import FTP, error_perm, error_reply
+from ftplib import FTP, error_perm, error_reply, _GLOBAL_DEFAULT_TIMEOUT
 from mycrypto import MyCipher
 from cryptography.exceptions import InvalidSignature
 
 
 class MyFTPClient(FTP):
-    from ftplib import _GLOBAL_DEFAULT_TIMEOUT
+    """
+    The custom FTP client object, extending the FTP object from the builtin ftplib library.
+    This class overrides server-interaction methods in order to handle encryption/decryption on the client side.
+    The changes and additions are detailed in all relevant methods below.
+    The encryption operations themselves are managed by a MyCipher object, defined in mycrypto.py.
+    """
 
     def __init__(self, host='', user='', passwd='', acct='', timeout=_GLOBAL_DEFAULT_TIMEOUT, source_address=None):
         self._cipher = None
@@ -38,9 +43,20 @@ class MyFTPClient(FTP):
                          else dirname for dirname in path.split('/')])
 
     def decrypt_server_message(self, line):
+        """
+        Decrypt encrypted strings within a server response.
+        :param line: (str) server response
+        :return: (str) the same message but with encrypted strings decrypted
+        """
         return ' '.join([self._decrypt_path(word) if len(word) >= 160 else word for word in line.split(' ')])
 
     def login(self, user='', passwd='', acct=''):
+        """
+        Initialize a MyCipher object, encrypt the given username and derive the server password
+        from the given password, then call the super-method with the results.
+        Prints a security error message if such a message was received from the server.
+        On no errors, call login_tag_verify (detailed below).
+        """
         self._cipher = MyCipher(passwd)
         user = self._encrypt_filename(user)
         server_key = self._cipher.derive_server_key()
@@ -54,6 +70,14 @@ class MyFTPClient(FTP):
         return resp
 
     def register(self, user, passwd, acct=''):
+        """
+        Register a new user. This works similarly to login but starts with an RGTR call instead of USER.
+        The username is encrypted and the server password is derived from the given password.
+        :param user: (str) username
+        :param passwd: (str) secret
+        :param acct: [unused]
+        :return: (str) server response
+        """
         self._cipher = MyCipher(passwd)
         user = self._encrypt_filename(user)
         resp = self.sendcmd('RGTR ' + user)
@@ -67,7 +91,11 @@ class MyFTPClient(FTP):
         return resp
 
     def retrbinary(self, cmd, callback, blocksize=8192, rest=None):
-        """Encrypt filename, then receive all data from the super-method and decrypt it as one piece"""
+        """
+        Encrypt the filename, then receive all data from the super-method (file download) and decrypt it.
+        Then call callback on the decrypted data in blocks (callback should write to local file).
+        Prints a security error message if the file data verification failed.
+        """
         retrcmd, path = cmd.split()
         enc_path = self._encrypt_path(path)
         with io.BytesIO() as buf:
@@ -87,7 +115,10 @@ class MyFTPClient(FTP):
         return resp
 
     def storbinary(self, cmd, fp, blocksize=8192, callback=None, rest=None):
-        """Encrypt filename, encrypt file contents into memory buffer, then call the super-method with them"""
+        """
+        Encrypt the filename and file contents, then call the super-method with them (file upload).
+        After the upload is done, send its MAC tag to the server and call exchange_meta_tag (detailed below).
+        """
         storcmd, path = cmd.split()
         enc_path = self._encrypt_path(path)
         enc_bytes, tag = self._cipher.encrypt(fp.read())
@@ -100,7 +131,9 @@ class MyFTPClient(FTP):
         return self.exchange_meta_tag()
 
     def retrlines(self, cmd, callback=None):
-        """Decrypt filenames received from LIST or NLST commands and print them"""
+        """
+        Decrypt filenames received from LIST or NLST commands and return the result.
+        """
         if cmd not in ('LIST', 'NLST'):
             return super().retrlines(cmd, callback)
         if callback is None:
@@ -109,6 +142,12 @@ class MyFTPClient(FTP):
         return super().retrlines(cmd, lambda line: callback(self._decrypt_path(line)))
 
     def exchange_meta_tag(self):
+        """"
+        Send a MAC tag for the server files' metadata by requesting the metadata
+        and running the HMAC algorithm on it.
+        This exchange follows every updating operation: storbinary, rename, delete, mkd, rmd
+        :return: (Union(str, None)) server response or None on error
+        """
         with io.BytesIO() as buf:
             try:
                 return super().retrbinary('META', buf.write, 8192, None)
@@ -116,18 +155,23 @@ class MyFTPClient(FTP):
                 if str(e)[0] != '3':
                     return None
                 buf.flush()
-                tagtag = self._cipher.get_hmac_tag(buf.getvalue())
-                return self.voidcmd('TAGTAG ' + tagtag.hex())
+                metatag = self._cipher.get_hmac_tag(buf.getvalue())
+                return self.voidcmd('METATAG ' + metatag.hex())
 
     def login_tag_verify(self):
+        """
+        Authenticate the files on server by requesting the file metadata and its tag
+        and calling the HMAC verification method on them.
+        Prints a security error message if the authentication failed.
+        """
         with io.BytesIO() as buf:
             super().retrbinary('LGMETA', buf.write, 8192, None)
             self.voidresp()
             buf.flush()
-            tagtag = bytes.fromhex(self.voidcmd('LGVF')[4:])
+            metatag = bytes.fromhex(self.voidcmd('LGVF')[4:])
             try:
-                if tagtag:
-                    self._cipher.authenticate_hmac(buf.getvalue(), tagtag)
+                if metatag:
+                    self._cipher.authenticate_hmac(buf.getvalue(), metatag)
             except InvalidSignature:
                 print('SECURITY ALERT -- Filesystem may be compromised', file=sys.stderr)
 
@@ -158,9 +202,20 @@ class MyFTPClient(FTP):
         return ', '.join(super().nlst(*args))
 
     def upload_file(self, filename):
+        """
+        Call storbinary to upload a file.
+        :param filename: (str) filename of the local file to upload
+        :return: (str) server response
+        """
         return self.storbinary('STOR ' + filename, open(filename, 'rb'))
 
     def download_file(self, filename):
+        """
+        Call retrbinary to download a file into a local file.
+        If the download failed, delete the local file.
+        :param filename: (str) filename (or path) of the requested file to download
+        :return: (str) server response
+        """
         with open(filename.split('/')[-1], 'wb') as outfile:
             resp = self.retrbinary('RETR ' + filename, outfile.write)
         if not resp:
@@ -168,6 +223,11 @@ class MyFTPClient(FTP):
         return resp
 
     def client_op(self, *args):
+        """
+        Call an ftp method an print its response (decrypt if necessary).
+        :param args: (str[]) the method name followed by its parameters
+        :return: (MyFTPClient) this FTP object
+        """
         method = getattr(MyFTPClient, args[0])
         args = [input('Please enter a %s\n' % arg) for arg in args[1:]]
         resp = method(self, *args)

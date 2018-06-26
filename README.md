@@ -1,8 +1,5 @@
 # Topics in Computer Security Mini-Project #
 
 ## TODO ##
-### Client ###
-* Done?
-
-### Server ###
-* Double done
+* Write a readme file for program usage and explanations 
+* Pack client and server into executables (?)

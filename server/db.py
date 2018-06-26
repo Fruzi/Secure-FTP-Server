@@ -6,6 +6,13 @@ users_db = os.path.realpath('users.db')
 
 
 class FileMetaHandler(object):
+    """
+    Handles file metadata storage per user (root) with SQLite.
+    File metadata includes 2 tables: Filenums and FileMetadata.
+    Filenums contains mappings between FTP file paths and physical paths (numbers, AKA numpaths). More details
+    explained in the MyDBFS class in server.py.
+    FileMetadata stores file sizes and MAC tags for uploaded files.
+    """
 
     def __init__(self, homedir):
         self.homedir = str(homedir)
@@ -27,7 +34,7 @@ class FileMetaHandler(object):
                                 filenum INTEGER NOT NULL,
                                 FOREIGN KEY (filenum) REFERENCES Filenums(filenum))""")
                 cursor.execute("""INSERT INTO Filenums VALUES (?, ?, ?)""", (int(self.homedir), self.root, '/'))
-        open(self.root + os.sep + 'tagtag', 'wb')
+        open(self.root + os.sep + 'mtag', 'wb')
 
     def add_file_meta(self, _filenum, _tag, _size):
         with sqlite3.connect(self.meta_db_path) as dbcon:
@@ -131,10 +138,10 @@ class FileMetaHandler(object):
             cursor.execute("""DELETE FROM Filenums WHERE filenum = (?)""", (_filenum,))
             return cursor.fetchone()
 
-    """
-    Fetches a file's numpath from the DB, or creates one if doesn't exist
-    """
     def get_numpath(self, path):
+        """
+        Fetch a file's numpath from the DB, or creates one if doesn't exist.
+        """
         numpath = self.fetch_numpath_by_ftppath(path)
         if not numpath:
             new_num = self.get_next_filenum()
@@ -192,7 +199,7 @@ def fetch_operms(username):
         return json.loads(cursor.fetchone()[0])
 
 
-# Returns a tuple contains the salt and hashed password of a given username
+# Returns a tuple containing the salt and hashed password of a given username
 def fetch_user_pass(_name):
     with sqlite3.connect(users_db) as dbcon:
         cursor = dbcon.cursor()
