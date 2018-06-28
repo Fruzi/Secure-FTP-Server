@@ -39,6 +39,8 @@ class MyFTPClient(FTP):
     def _decrypt_path(self, path):
         if path.startswith('"'):
             return '"%s"' % self._decrypt_path(path[1:-1])
+        if path.endswith(',') or path.endswith('.'):
+            return "%s%s" % (self._decrypt_path(path[:-1]), path[-1])
         return '/'.join([self._decrypt_filename(dirname) if self._is_regular_filename(dirname) and len(dirname) >= 160
                          else dirname for dirname in path.split('/')])
 
@@ -98,21 +100,23 @@ class MyFTPClient(FTP):
         """
         retrcmd, path = cmd.split()
         enc_path = self._encrypt_path(path)
-        with io.BytesIO() as buf:
-            try:
+        try:
+            with io.BytesIO() as buf:
                 resp = super().retrbinary(' '.join((retrcmd, enc_path)), buf.write, blocksize, rest)
                 buf.flush()
                 dec_bytes = self._cipher.decrypt(buf.getvalue())
-            except (error_perm, InvalidSignature):
-                print('SECURITY ALERT -- The file %s has been altered! Download aborted' % path, file=sys.stderr)
-                return None
-        with io.BytesIO(dec_bytes) as buf:
-            while True:
-                b = buf.read(blocksize)
-                if not b:
-                    break
-                callback(b)
-        return resp
+            with io.BytesIO(dec_bytes) as buf:
+                while True:
+                    b = buf.read(blocksize)
+                    if not b:
+                        break
+                    callback(b)
+            return resp
+        except (error_perm, InvalidSignature) as e:
+            if not (isinstance(e, InvalidSignature) or str(e).startswith('555')):
+                raise e
+            print('SECURITY ALERT -- The file %s has been altered! Download aborted' % path, file=sys.stderr)
+            return None
 
     def storbinary(self, cmd, fp, blocksize=8192, callback=None, rest=None):
         """
@@ -216,11 +220,15 @@ class MyFTPClient(FTP):
         :param filename: (str) filename (or path) of the requested file to download
         :return: (str) server response
         """
-        with open(filename.split('/')[-1], 'wb') as outfile:
-            resp = self.retrbinary('RETR ' + filename, outfile.write)
-        if not resp:
+        try:
+            with open(filename.split('/')[-1], 'wb') as outfile:
+                resp = self.retrbinary('RETR ' + filename, outfile.write)
+            if not resp:
+                os.remove(filename.split('/')[-1])
+            return resp
+        except error_perm as e:
             os.remove(filename.split('/')[-1])
-        return resp
+            raise e
 
     def client_op(self, *args):
         """
@@ -232,7 +240,7 @@ class MyFTPClient(FTP):
         args = [input('Please enter a %s\n' % arg) for arg in args[1:]]
         resp = method(self, *args)
         if resp:
-            print(self.decrypt_server_message(resp))
+            print(self.decrypt_server_message(resp) if isinstance(resp, str) else resp)
         return self
 
     def client_logout(self):
@@ -349,6 +357,8 @@ def display_menu(menu):
 
 
 def main():
+    os.chdir('../client')
+
     ftp = None
     while True:
         menu = logged_in_menu if ftp else logged_out_menu

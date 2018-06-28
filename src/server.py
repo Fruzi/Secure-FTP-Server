@@ -173,7 +173,7 @@ class MyFTPHandler(FTPHandler):
         self._registering = False
         self._received_file = None
         self._sending_temp_file = False
-        self.file_meta_handler = False
+        self.file_meta_handler = None
 
     def ftp_RGTR(self, line):
         """
@@ -258,7 +258,10 @@ class MyFTPHandler(FTPHandler):
         and call the super-method with it (file transfer to user).
         """
         filenum = file.split(os.sep)[-1]
-        stored_size = self.file_meta_handler.fetch_size(filenum)[0]
+        stored_size = self.file_meta_handler.fetch_size(filenum)
+        if not stored_size:
+            return super().ftp_RETR(file)
+        stored_size = stored_size[0]
         if stored_size != self.fs.getsize(file):
             self.respond('555 File size changed.')
             return
@@ -331,6 +334,8 @@ class MyFTPHandler(FTPHandler):
 
 
 def main():
+    os.chdir('../server')
+
     authorizer = MySmartyAuthorizer()
 
     handler = MyFTPHandler

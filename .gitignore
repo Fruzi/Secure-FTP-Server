@@ -2,6 +2,4 @@
 __pycache__/
 *.pdf
 client/
-!client/*.py
 server/
-!server/*.py
