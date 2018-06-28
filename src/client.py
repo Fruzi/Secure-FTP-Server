@@ -357,6 +357,8 @@ def display_menu(menu):
 
 
 def main():
+    if not os.path.exists('../client'):
+        os.mkdir('../client')
     os.chdir('../client')
 
     ftp = None

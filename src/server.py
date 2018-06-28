@@ -334,6 +334,8 @@ class MyFTPHandler(FTPHandler):
 
 
 def main():
+    if not os.path.exists('../server'):
+        os.mkdir('../server')
     os.chdir('../server')
 
     authorizer = MySmartyAuthorizer()
