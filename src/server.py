@@ -8,6 +8,8 @@ from pyftpdlib.servers import FTPServer
 from pyftpdlib.filesystems import AbstractedFS
 from cryptography.exceptions import InvalidKey
 
+ip = 'localhost'
+
 
 class MySmartyAuthorizer(DummyAuthorizer):
     """
@@ -334,9 +336,13 @@ class MyFTPHandler(FTPHandler):
 
 
 def main():
+    global ip
+
     if not os.path.exists('../server'):
         os.mkdir('../server')
     os.chdir('../server')
+
+    ip = input('IP (leave blank for \'localhost\'): ').strip() or ip
 
     authorizer = MySmartyAuthorizer()
 
@@ -345,7 +351,7 @@ def main():
     handler.abstracted_fs = MyDBFS
 
     # Instantiate FTP server class and listen on localhost:21
-    address = ('localhost', 21)
+    address = (ip, 21)
     server = FTPServer(address, handler)
 
     # set a limit for connections

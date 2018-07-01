@@ -5,6 +5,8 @@ from ftplib import FTP, error_perm, error_reply, _GLOBAL_DEFAULT_TIMEOUT
 from mycrypto import MyCipher
 from cryptography.exceptions import InvalidSignature
 
+ip = 'localhost'
+
 
 class MyFTPClient(FTP):
     """
@@ -252,7 +254,7 @@ class MyFTPClient(FTP):
     def client_register(ftp):
         username = input('Please enter a username\n')
         password = input('Please enter a password\n')
-        with MyFTPClient('localhost') as ftp:
+        with MyFTPClient(ip) as ftp:
             resp = ftp.register(username, password)
             print(ftp.decrypt_server_message(resp))
         return None
@@ -261,7 +263,7 @@ class MyFTPClient(FTP):
     def client_login(ftp):
         username = input('Please enter a username\n')
         password = input('Please enter a password\n')
-        ftp = MyFTPClient('localhost')
+        ftp = MyFTPClient(ip)
         resp = ftp.login(username, password)
         if resp:
             print(ftp.decrypt_server_message(resp))
@@ -357,9 +359,13 @@ def display_menu(menu):
 
 
 def main():
+    global ip
+
     if not os.path.exists('../client'):
         os.mkdir('../client')
     os.chdir('../client')
+
+    ip = input('IP (leave blank for \'localhost\'): ').strip() or ip
 
     ftp = None
     while True:
